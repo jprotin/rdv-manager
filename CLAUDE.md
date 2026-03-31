@@ -4,91 +4,118 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-### Development (without Docker)
+### Local development (Docker)
 
 ```bash
-# Backend — port 4201, requires MongoDB on localhost:27017
-cd backend && npm install && npm run dev
-
-# Frontend — port 5173, proxies /api to localhost:4201
-cd frontend && npm install && npm run dev
+cp frontend/.env.example frontend/.env   # renseigner les variables Firebase (project ID fictif ok)
+./deploy.sh dev       # démarre émulateur Firestore + frontend Vite (http://localhost:5173)
+./deploy.sh dev-stop  # arrêt propre (données exportées dans ./emulator-data/)
+./deploy.sh dev-logs  # logs en temps réel
 ```
 
-### Docker deployment
+### Production (Docker)
 
 ```bash
-./deploy.sh build      # Build Docker images
-./deploy.sh start      # Start all services (app on :4200)
-./deploy.sh stop       # Stop services
-./deploy.sh logs       # Tail logs
-./deploy.sh clean      # Remove everything including volumes
+./deploy.sh build      # build l'image Docker frontend
+./deploy.sh start      # démarre le frontend (http://localhost:4200)
+./deploy.sh stop       # arrête les services
+./deploy.sh logs       # tail des logs
+./deploy.sh clean      # supprime conteneurs, volumes, images
 ```
 
-### Frontend build check
+### Frontend checks
+
 ```bash
-cd frontend && npm run build    # produces dist/
-cd frontend && npm run preview  # preview the production build
+cd frontend && npm run build    # vérifier le build Vite (produit dist/)
+cd frontend && npm run preview  # prévisualiser le build de production
+```
+
+### Firestore indexes et rules (GCP)
+
+```bash
+firebase deploy --only firestore:indexes --project <PROJECT_ID>
+firebase deploy --only firestore:rules   --project <PROJECT_ID>
 ```
 
 ## Architecture
 
 ### Overview
 
-Monorepo with two independent Node.js projects (`backend/`, `frontend/`) orchestrated by `docker-compose.yml`. In production, nginx serves the built React app and proxies `/api/*` to the backend — no CORS issues. In dev, Vite's proxy does the same.
+Application **frontend-only** : pas de backend Node.js. Le frontend React communique directement avec **Firestore** via le SDK Firebase (modular v10). La persistence offline est native — Firestore met en cache les données dans IndexedDB et synchronise automatiquement à la reconnexion.
 
-### Backend (`backend/src/`)
-
-- **Express REST API** on port 4201. Uses CommonJS (`require`/`module.exports`).
-- **Two Mongoose models**: `Client` (contact + embedded address) and `Appointment` (refs Client via `client` field, not `clientId`).
-- **Soft deletes**: both models use `deletedAt: Date|null`. All queries filter `{ deletedAt: null }`. Sync endpoints return records with any `updatedAt`, including deleted ones.
-- **Sync endpoints**: `GET /api/clients/sync?since=<ISO>` and `GET /api/appointments/sync?since=<ISO>` — return all documents modified after `since`, used by the frontend offline sync.
-- **Status flow** for appointments: `pending → confirmed → completed` or `pending → cancelled`. `PATCH /:id/status` is the fast-path; `PUT /:id` is full update.
-- Route order matters: `/today`, `/week`, `/sync` must be defined before `/:id` in `routes/appointments.js` to avoid being consumed as an id parameter.
+```
+frontend/src/
+├── config/firebase.js          # initialisation Firebase + offline persistence
+├── services/firestore.js       # clientsService, appointmentsService, statsService
+├── context/AppContext.jsx      # isOnline, notify()
+└── components/
+    ├── Dashboard/
+    ├── Appointments/
+    ├── Clients/
+    ├── Stats/
+    ├── Settings/
+    ├── Layout/
+    └── common/
+```
 
 ### Frontend (`frontend/src/`)
 
-- **React Router v6** with a single nested layout: `Layout` wraps all pages via `<Outlet />`.
-- **ESM** (`"type": "module"` in package.json). All imports use `.jsx` extensions.
-- **AppContext** (`context/AppContext.jsx`) provides `isOnline`, `isSyncing`, `notify()`, `triggerSync()` via `useApp()` hook.
+- **React Router v6** avec layout unique : `Layout` enveloppe toutes les pages via `<Outlet />`.
+- **ESM** (`"type": "module"`). Tous les imports utilisent l'extension `.jsx`.
+- **AppContext** (`context/AppContext.jsx`) fournit `isOnline` et `notify()` via `useApp()`.
 
-#### Offline data flow
+### Données (Firestore)
 
-1. **Online reads**: fetch from API, results are displayed directly (not stored in PouchDB on read).
-2. **Online writes**: call API; if it fails, fall back to local PouchDB with `_synced: false`.
-3. **Offline reads**: `getLocalAppointments()` / `getLocalClients()` from PouchDB.
-4. **Offline writes**: save to PouchDB with `_synced: false`, call `registerBackgroundSync()`.
-5. **Reconnect**: `AppContext` listens to `window.online` → calls `triggerSync()` → `syncAll()` in `services/db.js`.
+Deux collections : `clients` et `appointments`. Toutes les suppressions sont des **soft deletes** (`deletedAt: Timestamp | null`). Toutes les requêtes filtrent sur `where('deletedAt', '==', null)`.
 
-#### PouchDB document IDs
+Les appointments embarquent un **snapshot client** (champ `client`) au moment de la création — les données client sont copiées dans le document rendez-vous pour éviter des lectures supplémentaires.
 
-- For server-synced docs: use MongoDB `_id.toString()` as PouchDB `_id`.
-- For locally-created offline docs: `local_<timestamp>_<random>` prefix.
-- `remoteId` field stores the MongoDB `_id` once synced.
+**Status flow** : `pending → confirmed → completed` ou `pending → cancelled`. Les statuts `cancelled` et `completed` peuvent repasser à `pending` (réouverture).
 
-#### Key component details
+### Offline
 
-- **`AddressSearch`**: uses `onMouseDown` (not `onClick`) on list items — prevents `onBlur` from closing the dropdown before selection fires. Calls `api-adresse.data.gouv.fr` with 300ms debounce.
-- **`PhoneInput`**: formats digits as `XX XX XX XX XX` in the UI. The raw digits should be stripped (`replace(/\s/g, '')`) before sending to the API.
-- **`CreateAppointmentModal`**: creates Client first (if not selected from search), then creates Appointment referencing `client._id`.
-- **`AppointmentCard` / `ClientCard`**: accordion pattern — clicking the card toggles expanded detail view inline, no separate route.
+`firebase.js` initialise Firestore avec `persistentLocalCache` + `persistentMultipleTabManager` : le SDK gère automatiquement le cache IndexedDB et la synchronisation au retour en ligne. Aucune logique de sync manuelle dans le code applicatif.
 
-### Docker Compose services
+En `import.meta.env.DEV`, `connectFirestoreEmulator(db, '127.0.0.1', 8080)` redirige tout le trafic vers l'émulateur local.
+
+### Key component details
+
+- **`AddressSearch`** : utilise `onMouseDown` (pas `onClick`) sur les items de liste — empêche `onBlur` de fermer le dropdown avant que la sélection se déclenche. Appelle `api-adresse.data.gouv.fr` avec 300ms debounce.
+- **`PhoneInput`** : formate les chiffres en `XX XX XX XX XX` dans l'UI. Les espaces doivent être retirés (`replace(/\s/g, '')`) avant envoi à Firestore.
+- **`CreateAppointmentModal`** : crée le client en premier si aucun n'est sélectionné, puis crée le rendez-vous avec `clientId` et snapshot client embarqué.
+- **`AppointmentCard` / `ClientCard`** : pattern accordéon — clic sur la carte bascule la vue détail inline, pas de route séparée.
+
+### Docker Compose
+
+**Production** (`docker-compose.yml`) :
 
 | Service | Image | Port |
 |---------|-------|------|
-| `mongodb` | mongo:7 | internal only |
-| `backend` | node:20-alpine | internal :4201 |
-| `frontend` | nginx:alpine | host :4200 (configurable via `FRONTEND_PORT`) |
+| `frontend` | nginx:alpine (multi-stage build) | host :4200 |
 
-Backend depends on MongoDB health check. Frontend depends on backend health check.
+La config Firebase est compilée dans le bundle au `docker build` via `ARG` / `ENV` Vite.
+
+**Développement** (`docker-compose.dev.yml`) :
+
+| Service | Image | Port |
+|---------|-------|------|
+| `emulator` | node:20-alpine + OpenJDK 17 | 8080 (Firestore), 4000 (UI) |
+| `frontend` | node:20-alpine | 5173 (Vite dev server) |
+
+Le frontend attend le healthcheck de l'émulateur avant de démarrer. Le volume `frontend_modules` isole les `node_modules` du conteneur de ceux de l'hôte.
 
 ### Environment variables
 
-Root `.env` is loaded by `deploy.sh` and `docker-compose.yml`:
-- `MONGO_USER`, `MONGO_PASSWORD` — MongoDB credentials
-- `FRONTEND_PORT` — host port for the frontend (default: 4200)
+`frontend/.env` (lu par Vite et par `docker-compose.dev.yml` via `env_file`) :
 
-Backend reads from its own env (injected by compose):
-- `MONGO_URI` — full MongoDB connection string
-- `PORT` — defaults to 4201
-- `CORS_ORIGIN` — defaults to `*`
+```
+VITE_FIREBASE_API_KEY
+VITE_FIREBASE_AUTH_DOMAIN
+VITE_FIREBASE_PROJECT_ID
+VITE_FIREBASE_STORAGE_BUCKET
+VITE_FIREBASE_MESSAGING_SENDER_ID
+VITE_FIREBASE_APP_ID
+FRONTEND_PORT   # port hôte production (défaut: 4200)
+```
+
+Pour l'émulateur, le `VITE_FIREBASE_PROJECT_ID` peut être fictif (ex: `rdv-dev`).

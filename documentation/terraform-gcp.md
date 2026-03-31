@@ -5,35 +5,89 @@
 ```
 Internet (HTTPS)
   │
-  ├── Cloud Run — frontend  (nginx, static files)
-  │     │  VITE_API_URL → backend URL
-  │     └── Cloud Run — backend  (Node.js / Express)
-  │           │  VPC Access Connector
-  │           └── VM Compute Engine e2-micro — MongoDB 7
-  │                 └── Disque persistant 20 Go (pd-standard)
-  │
-  └── Artifact Registry  (images Docker privées)
-      Secret Manager     (MONGO_URI)
-      Cloud NAT          (accès internet sortant VM uniquement)
+  └── Cloud Run — frontend  (nginx, fichiers statiques React)
+        │  Firebase SDK (embarqué dans le bundle JS)
+        └── Firestore  (base de données managée GCP, offline-first)
+
+Artifact Registry  (image Docker frontend)
 ```
 
-Toutes les ressources sont déployées en **europe-west1**. MongoDB n'est jamais exposé sur internet : il n'a pas d'IP publique et n'est accessible qu'en SSH via Cloud IAP ou depuis Cloud Run via le VPC connector.
+Le frontend est une **application statique** : il n'y a pas de backend Node.js. Toute la logique de données passe par le SDK Firebase directement depuis le navigateur. La configuration Firestore (API key, project ID, etc.) est compilée dans le bundle au moment du `docker build`.
 
 ---
 
-## Prérequis
+## Développement local
 
-| Outil | Version minimale | Installation |
-|-------|-----------------|--------------|
-| Terraform | 1.5+ | [terraform.io/downloads](https://developer.hashicorp.com/terraform/downloads) |
-| gcloud CLI | récente | [cloud.google.com/sdk](https://cloud.google.com/sdk/docs/install) |
-| Docker | 24+ | [docs.docker.com](https://docs.docker.com/get-docker/) |
+### Prérequis
 
-### Compte GCP
+| Outil | Rôle |
+|-------|------|
+| Docker + Docker Compose | Émulateur Firestore + frontend dev |
+
+### Démarrage
+
+```bash
+# 1. Créer le fichier de configuration
+cp frontend/.env.example frontend/.env
+# Éditer frontend/.env — le project ID peut être fictif (ex: rdv-dev)
+# Les autres valeurs Firebase peuvent aussi être fictives pour l'émulateur
+
+# 2. Tout démarrer (premier lancement : ~2 min pour builder l'image émulateur)
+./deploy.sh dev
+```
+
+L'environnement complet démarre en séquence :
+1. **Émulateur Firestore** (Docker) — attend le healthcheck avant de continuer
+2. **Frontend Vite** (Docker) — `npm install` puis `npm run dev`
+
+| Service | URL |
+|---------|-----|
+| Application | http://localhost:5173 |
+| Emulator UI | http://localhost:4000 |
+
+Le SDK Firebase détecte automatiquement `import.meta.env.DEV === true` et redirige toutes les requêtes vers l'émulateur local (`127.0.0.1:8080`) — aucun appel ne part vers GCP.
+
+### Commandes dev
+
+```bash
+./deploy.sh dev        # démarrer (build si nécessaire)
+./deploy.sh dev-stop   # arrêter (données exportées dans ./emulator-data/)
+./deploy.sh dev-logs   # logs en temps réel
+```
+
+Les données Firestore sont persistées entre les redémarrages dans `./emulator-data/` (ignoré par git).
+
+### Structure de l'émulateur
+
+```
+emulator/
+├── Dockerfile   # node:20-alpine + OpenJDK 17 + firebase-tools
+└── start.sh     # importe ./emulator-data/ si présent, sinon base vide
+firebase.json          # config ports émulateur (host: 0.0.0.0 pour Docker)
+firestore.rules        # règles de sécurité (appliquées par l'émulateur)
+firestore.indexes.json # index composites
+```
+
+---
+
+## Déploiement GCP
+
+### Prérequis
+
+| Outil | Version minimale |
+|-------|-----------------|
+| Terraform | 1.5+ |
+| gcloud CLI | récente |
+| Docker | 24+ |
+
+### Compte GCP et Firebase
 
 1. Créer un projet sur [console.cloud.google.com](https://console.cloud.google.com)
-2. **Activer la facturation** sur ce projet (obligatoire pour Compute Engine et Cloud Run)
-3. Noter le **Project ID** (pas le nom, le slug `mon-projet-123`)
+2. **Activer la facturation** sur ce projet
+3. Ouvrir [console.firebase.google.com](https://console.firebase.google.com), ajouter le projet GCP existant
+4. Dans Firebase Console → Project Settings → General → *Your apps* → ajouter une app Web
+5. Copier le bloc de configuration Firebase (API key, project ID, etc.)
+6. Dans Firebase Console → Build → Firestore Database → créer la base en mode **natif** (région `europe-west1`)
 
 ### Authentification locale
 
@@ -43,177 +97,51 @@ gcloud auth application-default login
 gcloud config set project <PROJECT_ID>
 ```
 
----
+### Variables d'environnement
 
-## Structure Terraform
+Exporter les variables Firebase avant de lancer le déploiement :
 
+```bash
+export VITE_FIREBASE_API_KEY="AIzaSy..."
+export VITE_FIREBASE_AUTH_DOMAIN="mon-projet.firebaseapp.com"
+export VITE_FIREBASE_PROJECT_ID="mon-projet-123"
+export VITE_FIREBASE_STORAGE_BUCKET="mon-projet-123.appspot.com"
+export VITE_FIREBASE_MESSAGING_SENDER_ID="123456789"
+export VITE_FIREBASE_APP_ID="1:123456789:web:abc123"
 ```
-terraform/
-├── main.tf                  # Provider Google, activation des APIs
-├── variables.tf             # Variables d'entrée
-├── outputs.tf               # URLs et IP en sortie
-├── network.tf               # VPC, subnets, VPC connector, Cloud NAT, firewall
-├── secrets.tf               # Secret Manager + compte de service Cloud Run
-├── registry.tf              # Artifact Registry (dépôt Docker)
-├── mongodb.tf               # VM Compute Engine + disque persistant
-├── backend_cloudrun.tf      # Cloud Run backend + secret MONGO_URI
-├── frontend_cloudrun.tf     # Cloud Run frontend
-└── scripts/
-    └── mongodb-startup.sh   # Script d'initialisation de la VM
-```
-
-### Variables (`variables.tf`)
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `project_id` | string | Project ID GCP |
-| `region` | string | Région (défaut : `europe-west1`) |
-| `zone` | string | Zone (défaut : `europe-west1-b`) |
-| `mongo_password` | string (sensitive) | Mot de passe admin MongoDB |
-| `backend_image` | string | Image Docker backend (Artifact Registry) |
-| `frontend_image` | string | Image Docker frontend (Artifact Registry) |
-
-### Outputs (`outputs.tf`)
-
-| Output | Description |
-|--------|-------------|
-| `frontend_url` | URL HTTPS publique du frontend |
-| `backend_url` | URL HTTPS publique du backend |
-| `mongodb_private_ip` | IP privée de la VM MongoDB |
-| `artifact_registry` | URL de base du registre Docker |
-
----
-
-## Ressources créées
-
-### APIs GCP activées (`main.tf`)
-
-- `run.googleapis.com` — Cloud Run
-- `compute.googleapis.com` — Compute Engine (VM MongoDB)
-- `secretmanager.googleapis.com` — Secret Manager
-- `artifactregistry.googleapis.com` — Artifact Registry
-- `vpcaccess.googleapis.com` — VPC Access Connector
-- `cloudresourcemanager.googleapis.com` — gestion du projet
-
-### Réseau (`network.tf`)
-
-| Ressource | Nom | CIDR | Rôle |
-|-----------|-----|------|------|
-| VPC | `rdv-manager-vpc` | — | Réseau privé principal |
-| Subnet | `rdv-manager-subnet` | `10.10.0.0/24` | VM MongoDB |
-| Subnet | `rdv-manager-connector` | `10.10.1.0/28` | VPC Access Connector (taille imposée par GCP) |
-| VPC Connector | `rdv-connector` | — | Pont Cloud Run → VPC |
-| Cloud Router | `rdv-router` | — | Support NAT |
-| Cloud NAT | `rdv-nat` | — | Internet sortant pour la VM (installation des packages) |
-
-**Règles firewall :**
-- Port 27017 (MongoDB) autorisé uniquement depuis `10.10.0.0/24` et `10.10.1.0/28`
-- Port 22 (SSH) autorisé uniquement depuis `35.235.240.0/20` (plage Cloud IAP)
-- Aucune IP publique sur la VM MongoDB
-
-### VM MongoDB (`mongodb.tf`)
-
-- **Machine** : `e2-micro` (~7 €/mois en europe-west1)
-- **OS** : Ubuntu 22.04 LTS
-- **Disque boot** : 10 Go `pd-standard`
-- **Disque données** : 20 Go `pd-standard` monté sur `/data/mongodb`
-- **Réseau** : IP privée uniquement, pas d'IP publique
-
-Le script `scripts/mongodb-startup.sh` s'exécute au premier démarrage et :
-1. Formate et monte le disque de données (`/data/mongodb`)
-2. Installe MongoDB 7 Community Edition
-3. Configure MongoDB pour écouter sur toutes les interfaces (port 27017)
-4. Crée l'utilisateur admin `rdvadmin` avec le mot de passe fourni
-5. Active l'authentification et redémarre MongoDB
-
-> **Idempotence** : le script vérifie si l'utilisateur existe déjà avant de le créer. Il peut être ré-exécuté sans effet secondaire.
-
-### Secret Manager (`secrets.tf`)
-
-Deux secrets sont créés :
-
-| Secret | Contenu |
-|--------|---------|
-| `mongo-password` | Mot de passe MongoDB brut |
-| `mongo-uri` | URI complète `mongodb://rdvadmin:<password>@<ip>:27017/rdvmanager?authSource=admin` |
-
-Un **compte de service** `rdv-cloudrun` est créé et dispose du rôle `roles/secretmanager.secretAccessor` sur ces deux secrets. Ce compte est utilisé par les deux services Cloud Run.
-
-### Artifact Registry (`registry.tf`)
-
-Dépôt Docker privé `rdv-manager` en `europe-west1`. Le compte de service `rdv-cloudrun` dispose du rôle `roles/artifactregistry.reader` pour que Cloud Run puisse puller les images.
-
-### Backend Cloud Run (`backend_cloudrun.tf`)
-
-| Paramètre | Valeur |
-|-----------|--------|
-| Nom | `rdv-backend` |
-| Port | 4201 |
-| CPU | 1 vCPU |
-| Mémoire | 512 Mi |
-| Min instances | 0 (scale to zero) |
-| Max instances | 10 |
-| VPC egress | `PRIVATE_RANGES_ONLY` (trafic vers MongoDB via VPC) |
-
-Variables d'environnement injectées :
-- `NODE_ENV=production`
-- `PORT=4201`
-- `CORS_ORIGIN=*`
-- `MONGO_URI` → lu depuis Secret Manager (jamais en clair dans la config)
-
-Un health check sur `GET /health` est configuré avec un délai initial de 5 secondes.
-
-### Frontend Cloud Run (`frontend_cloudrun.tf`)
-
-| Paramètre | Valeur |
-|-----------|--------|
-| Nom | `rdv-frontend` |
-| Port | 80 |
-| CPU | 1 vCPU |
-| Mémoire | 256 Mi |
-| Min instances | 0 |
-| Max instances | 5 |
-
-L'URL du backend (`BACKEND_URL`) est passée comme variable d'environnement. L'image Docker est buildée avec `VITE_API_URL` baked-in au moment du build Vite (voir section Déploiement).
-
----
-
-## Déploiement
 
 ### Premier déploiement
 
 ```bash
-./deploy-gcp.sh <PROJECT_ID> <MONGO_PASSWORD>
+./deploy-gcp.sh <PROJECT_ID>
 ```
 
-Le script effectue 5 étapes dans l'ordre :
+Le script effectue 3 étapes :
 
 ```
-[1/5] Authentification Artifact Registry
-[2/5] Infrastructure : VPC, MongoDB, Artifact Registry, VPC Connector
-       └── terraform apply -target=... (infra uniquement)
-[3/5] Build + push image backend
-       └── docker build ./backend → push vers Artifact Registry
-[4/5] Déploiement backend Cloud Run → récupération de l'URL
-[5/5] Build frontend avec VITE_API_URL=<backend_url>/api
-       └── docker build --build-arg VITE_API_URL=... ./frontend
-       └── terraform apply (apply complet)
+[1/3] Authentification Artifact Registry
+[2/3] Infrastructure : APIs GCP + Artifact Registry + Firestore + Cloud Run (placeholder)
+       └── terraform apply -target=...
+[3/3] Build Docker frontend (Firebase config compilée dans le bundle)
+       └── docker build --build-arg VITE_FIREBASE_* ...
+       └── docker push
+       └── terraform apply (image finale)
 ```
 
-> L'ordre en 5 étapes est nécessaire à cause d'une dépendance circulaire : le frontend doit être buildé avec l'URL du backend, qui n'est connue qu'après le déploiement Cloud Run du backend.
-
-### Mise à jour du code
+### Mise à jour du frontend
 
 ```bash
-# Mettre à jour uniquement le backend
 REGISTRY="europe-west1-docker.pkg.dev/<PROJECT_ID>/rdv-manager"
-docker build -t $REGISTRY/backend:latest ./backend
-docker push $REGISTRY/backend:latest
-gcloud run deploy rdv-backend --image $REGISTRY/backend:latest --region europe-west1
 
-# Mettre à jour uniquement le frontend
-BACKEND_URL=$(gcloud run services describe rdv-backend --region europe-west1 --format='value(status.url)')
-docker build --build-arg VITE_API_URL="$BACKEND_URL/api" -t $REGISTRY/frontend:latest ./frontend
+docker build \
+  --build-arg VITE_FIREBASE_API_KEY="$VITE_FIREBASE_API_KEY" \
+  --build-arg VITE_FIREBASE_AUTH_DOMAIN="$VITE_FIREBASE_AUTH_DOMAIN" \
+  --build-arg VITE_FIREBASE_PROJECT_ID="$VITE_FIREBASE_PROJECT_ID" \
+  --build-arg VITE_FIREBASE_STORAGE_BUCKET="$VITE_FIREBASE_STORAGE_BUCKET" \
+  --build-arg VITE_FIREBASE_MESSAGING_SENDER_ID="$VITE_FIREBASE_MESSAGING_SENDER_ID" \
+  --build-arg VITE_FIREBASE_APP_ID="$VITE_FIREBASE_APP_ID" \
+  -t $REGISTRY/frontend:latest ./frontend
+
 docker push $REGISTRY/frontend:latest
 gcloud run deploy rdv-frontend --image $REGISTRY/frontend:latest --region europe-west1
 ```
@@ -224,54 +152,127 @@ gcloud run deploy rdv-frontend --image $REGISTRY/frontend:latest --region europe
 cd terraform
 terraform destroy \
   -var="project_id=<PROJECT_ID>" \
-  -var="mongo_password=<MONGO_PASSWORD>" \
-  -var="backend_image=placeholder" \
-  -var="frontend_image=placeholder"
+  -var="frontend_image=placeholder" \
+  -var="firebase_api_key=x" \
+  -var="firebase_auth_domain=x" \
+  -var="firebase_storage_bucket=x" \
+  -var="firebase_messaging_sender_id=x" \
+  -var="firebase_app_id=x"
 ```
 
-> ⚠️ Cela supprime la VM MongoDB et son disque de données. Faites une sauvegarde avant.
+> La base Firestore et ses données **ne sont pas supprimées** par Terraform destroy (protection GCP). La supprimer manuellement depuis la console Firebase si nécessaire.
 
 ---
 
-## Accès SSH à la VM MongoDB
+## Structure Terraform
 
-La VM n'a pas d'IP publique. L'accès se fait via **Cloud IAP** :
-
-```bash
-gcloud compute ssh mongodb \
-  --zone europe-west1-b \
-  --tunnel-through-iap \
-  --project <PROJECT_ID>
+```
+terraform/
+├── main.tf               # Provider Google, APIs activées, compte de service Cloud Run
+├── variables.tf          # Variables d'entrée
+├── outputs.tf            # URLs en sortie
+├── registry.tf           # Artifact Registry (dépôt Docker privé)
+├── firestore.tf          # Base de données Firestore native
+└── frontend_cloudrun.tf  # Cloud Run frontend + accès public
 ```
 
-Une fois connecté :
-```bash
-# Vérifier le statut MongoDB
-sudo systemctl status mongod
+### Variables (`variables.tf`)
 
-# Se connecter au shell MongoDB
-mongosh "mongodb://rdvadmin:<password>@localhost:27017/rdvmanager?authSource=admin"
+| Variable | Description |
+|----------|-------------|
+| `project_id` | Project ID GCP |
+| `region` | Région (défaut : `europe-west1`) |
+| `frontend_image` | Image Docker frontend (Artifact Registry) |
+| `firebase_api_key` | Firebase Web API Key (sensitive) |
+| `firebase_auth_domain` | Firebase Auth Domain |
+| `firebase_storage_bucket` | Firebase Storage Bucket |
+| `firebase_messaging_sender_id` | Firebase Messaging Sender ID |
+| `firebase_app_id` | Firebase App ID (sensitive) |
 
-# Consulter les logs de démarrage
-sudo cat /var/log/startup-script.log
-```
+### Outputs (`outputs.tf`)
+
+| Output | Description |
+|--------|-------------|
+| `frontend_url` | URL HTTPS publique du frontend |
+| `artifact_registry` | URL de base du registre Docker |
 
 ---
 
-## Sauvegarde MongoDB
+## Ressources créées
 
+### APIs GCP activées
+
+- `run.googleapis.com` — Cloud Run
+- `firestore.googleapis.com` — Firestore
+- `artifactregistry.googleapis.com` — Artifact Registry
+- `cloudresourcemanager.googleapis.com` — gestion du projet
+
+### Firestore (`firestore.tf`)
+
+Base de données en mode **natif** (`FIRESTORE_NATIVE`) en `europe-west1`. La structure des collections est gérée au niveau applicatif :
+
+| Collection | Champs principaux |
+|------------|------------------|
+| `clients` | `firstName`, `lastName`, `phone`, `address`, `deletedAt`, `createdAt` |
+| `appointments` | `title`, `clientId`, `client` (snapshot), `startAt`, `endAt`, `status`, `deletedAt` |
+
+Toutes les suppressions sont des **soft deletes** (`deletedAt: Timestamp \| null`). Les requêtes filtrent systématiquement sur `where('deletedAt', '==', null)`.
+
+### Index composites (`firestore.indexes.json`)
+
+| Collection | Champs indexés |
+|------------|---------------|
+| `appointments` | `deletedAt` ASC + `startAt` ASC |
+| `appointments` | `deletedAt` ASC + `startAt` DESC |
+| `appointments` | `deletedAt` ASC + `status` ASC + `startAt` ASC |
+| `clients` | `deletedAt` ASC + `lastName` ASC |
+
+Déployer les index manuellement si nécessaire :
 ```bash
-# Depuis la VM (via SSH IAP)
-mongodump \
-  --uri "mongodb://rdvadmin:<password>@localhost:27017/rdvmanager?authSource=admin" \
-  --out /tmp/backup-$(date +%Y%m%d)
+firebase deploy --only firestore:indexes --project <PROJECT_ID>
+```
 
-# Télécharger le dump localement
-gcloud compute scp --recurse \
-  --zone europe-west1-b \
-  --tunnel-through-iap \
-  mongodb:/tmp/backup-$(date +%Y%m%d) \
-  ./backups/
+### Artifact Registry (`registry.tf`)
+
+Dépôt Docker privé `rdv-manager` en `europe-west1`. Le compte de service `rdv-cloudrun` dispose du rôle `roles/artifactregistry.reader`.
+
+### Cloud Run frontend (`frontend_cloudrun.tf`)
+
+| Paramètre | Valeur |
+|-----------|--------|
+| Nom | `rdv-frontend` |
+| Port | 80 (nginx) |
+| CPU | 1 vCPU |
+| Mémoire | 256 Mi |
+| Min instances | 0 (scale to zero) |
+| Max instances | 5 |
+| Accès | public (`allUsers`) |
+
+Le conteneur sert les fichiers statiques via nginx. La configuration Firebase est compilée dans le bundle JS au `docker build` — aucune variable d'environnement runtime n'est nécessaire.
+
+---
+
+## Sécurité Firestore
+
+Les règles dans `firestore.rules` contrôlent l'accès aux données depuis le navigateur. En l'absence de Firebase Authentication, elles sont actuellement ouvertes (`allow read, write: if true`).
+
+Pour restreindre l'accès à des utilisateurs authentifiés :
+
+```js
+// firestore.rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+```
+
+Déployer les règles :
+```bash
+firebase deploy --only firestore:rules --project <PROJECT_ID>
 ```
 
 ---
@@ -280,24 +281,10 @@ gcloud compute scp --recurse \
 
 | Ressource | Coût mensuel estimé |
 |-----------|-------------------|
-| VM e2-micro (MongoDB) | ~7 € |
-| Disque pd-standard 20 Go | ~1 € |
-| Disque pd-standard boot 10 Go | ~0,50 € |
-| Cloud Run backend (faible trafic) | < 1 € |
 | Cloud Run frontend (faible trafic) | < 1 € |
-| VPC Access Connector (2x e2-micro) | ~14 € |
+| Firestore (< 50k lectures/jour) | gratuit (free tier) |
+| Firestore (au-delà) | ~0,06 €/100k lectures |
 | Artifact Registry (< 1 Go) | ~0,10 € |
-| Secret Manager | < 0,10 € |
-| **Total estimé** | **~24 €/mois** |
+| **Total estimé** | **< 2 €/mois** |
 
-> Le VPC Access Connector représente le poste principal. Pour réduire les coûts en production, envisager un Cloud Run avec `--vpc-egress=all-traffic` et une IP statique pour MongoDB.
-
----
-
-## Sécurité
-
-- **MongoDB** sans IP publique — accessible uniquement depuis le VPC privé
-- **SSH** uniquement via Cloud IAP (pas de bastion, pas d'IP publique)
-- **MONGO_URI** stocké dans Secret Manager, jamais en variable d'environnement en clair
-- **Images Docker** dans Artifact Registry privé (pas Docker Hub)
-- **Cloud Run** avec compte de service dédié (`rdv-cloudrun`) au principe du moindre privilège
+> Le free tier Firestore couvre 50 000 lectures, 20 000 écritures et 20 000 suppressions par jour — largement suffisant pour un usage personnel ou une petite équipe.

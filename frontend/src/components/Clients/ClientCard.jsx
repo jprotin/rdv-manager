@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { clientsApi } from '../../services/api.js';
+import { clientsService } from '../../services/firestore.js';
 import { useApp } from '../../context/AppContext.jsx';
 
 function formatPhone(phone) {
@@ -9,16 +9,15 @@ function formatPhone(phone) {
 }
 
 export default function ClientCard({ client, onUpdate }) {
-  const { isOnline, notify } = useApp();
+  const { notify } = useApp();
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   const handleDelete = async () => {
-    if (!isOnline) { notify('error', 'Action impossible hors ligne'); return; }
     if (!confirm(`Supprimer ${client.firstName} ${client.lastName} ?`)) return;
     setLoading(true);
     try {
-      await clientsApi.delete(client._id);
+      await clientsService.delete(client._id);
       notify('success', 'Client supprimé');
       onUpdate();
     } catch (err) {

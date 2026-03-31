@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { statsApi } from '../../services/api.js';
-import { useApp } from '../../context/AppContext.jsx';
+import { statsService } from '../../services/firestore.js';
 
 function StatCard({ label, value, color, sub }) {
   const colors = {
@@ -40,7 +39,6 @@ function BarChart({ data }) {
 }
 
 export default function Statistics() {
-  const { isOnline } = useApp();
   const [overview, setOverview] = useState(null);
   const [monthly, setMonthly] = useState(null);
   const [upcoming, setUpcoming] = useState([]);
@@ -48,29 +46,19 @@ export default function Statistics() {
   const year = new Date().getFullYear();
 
   useEffect(() => {
-    if (!isOnline) { setLoading(false); return; }
     Promise.all([
-      statsApi.overview(),
-      statsApi.monthly(year),
-      statsApi.upcoming(),
+      statsService.getOverview(),
+      statsService.getMonthly(year),
+      statsService.getUpcoming(),
     ])
       .then(([ov, mo, up]) => {
         setOverview(ov);
         setMonthly(mo.data);
-        setUpcoming(up.data);
+        setUpcoming(up);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [isOnline, year]);
-
-  if (!isOnline) {
-    return (
-      <div className="text-center py-12 text-gray-400">
-        <p className="text-4xl mb-3">📊</p>
-        <p className="font-medium">Statistiques disponibles en ligne uniquement</p>
-      </div>
-    );
-  }
+  }, [year]);
 
   if (loading) return <div className="text-center py-10 text-gray-400">Chargement...</div>;
 
@@ -78,7 +66,6 @@ export default function Statistics() {
     <div className="space-y-5">
       <h1 className="text-xl font-bold text-gray-800">Statistiques</h1>
 
-      {/* Overview cards */}
       {overview && (
         <div className="grid grid-cols-2 gap-3">
           <StatCard label="Clients" value={overview.totalClients} color="blue" />
@@ -88,7 +75,6 @@ export default function Statistics() {
         </div>
       )}
 
-      {/* Status breakdown */}
       {overview?.statusBreakdown && (
         <div className="card">
           <h2 className="font-semibold text-gray-700 mb-3">Répartition par statut</h2>
@@ -108,7 +94,6 @@ export default function Statistics() {
         </div>
       )}
 
-      {/* Monthly chart */}
       {monthly && (
         <div className="card">
           <h2 className="font-semibold text-gray-700">Rendez-vous par mois ({year})</h2>
@@ -116,7 +101,6 @@ export default function Statistics() {
         </div>
       )}
 
-      {/* Upcoming */}
       {upcoming.length > 0 && (
         <div className="card">
           <h2 className="font-semibold text-gray-700 mb-3">Prochains rendez-vous</h2>

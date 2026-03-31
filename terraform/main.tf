@@ -17,12 +17,16 @@ provider "google" {
 resource "google_project_service" "apis" {
   for_each = toset([
     "run.googleapis.com",
-    "compute.googleapis.com",
-    "secretmanager.googleapis.com",
+    "firestore.googleapis.com",
     "artifactregistry.googleapis.com",
-    "vpcaccess.googleapis.com",
     "cloudresourcemanager.googleapis.com",
   ])
   service            = each.key
   disable_on_destroy = false
+}
+
+# Service account pour Cloud Run
+resource "google_service_account" "cloudrun_sa" {
+  account_id   = "rdv-cloudrun"
+  display_name = "RDV Manager — Cloud Run"
 }

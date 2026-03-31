@@ -8,11 +8,6 @@ resource "google_cloud_run_v2_service" "frontend" {
     containers {
       image = var.frontend_image
 
-      env {
-        name  = "BACKEND_URL"
-        value = google_cloud_run_v2_service.backend.uri
-      }
-
       ports {
         container_port = 80
       }
@@ -31,7 +26,7 @@ resource "google_cloud_run_v2_service" "frontend" {
     }
   }
 
-  depends_on = [google_cloud_run_v2_service.backend]
+  depends_on = [google_project_service.apis]
 }
 
 # Accès public au frontend

@@ -1,11 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import ClientCard from './ClientCard.jsx';
-import { clientsApi } from '../../services/api.js';
-import { getLocalClients } from '../../services/db.js';
-import { useApp } from '../../context/AppContext.jsx';
+import { clientsService } from '../../services/firestore.js';
 
 export default function ClientList() {
-  const { isOnline } = useApp();
   const [clients, setClients] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -14,32 +11,15 @@ export default function ClientList() {
   const fetchClients = useCallback(async () => {
     setLoading(true);
     try {
-      if (isOnline) {
-        const res = await clientsApi.list({ search, limit: 100 });
-        setClients(res.data);
-        setTotal(res.total);
-      } else {
-        let local = await getLocalClients();
-        if (search) {
-          const q = search.toLowerCase();
-          local = local.filter(
-            (c) =>
-              c.firstName?.toLowerCase().includes(q) ||
-              c.lastName?.toLowerCase().includes(q) ||
-              c.phone?.includes(q)
-          );
-        }
-        setClients(local);
-        setTotal(local.length);
-      }
-    } catch {
-      const local = await getLocalClients();
-      setClients(local);
-      setTotal(local.length);
+      const data = await clientsService.getAll(search);
+      setClients(data);
+      setTotal(data.length);
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [isOnline, search]);
+  }, [search]);
 
   useEffect(() => {
     const t = setTimeout(fetchClients, search ? 300 : 0);

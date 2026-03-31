@@ -1,12 +1,19 @@
 #!/bin/bash
 set -e
 
-# Usage: ./deploy-gcp.sh <PROJECT_ID> <MONGO_PASSWORD>
-PROJECT_ID=${1:?"Usage: $0 <PROJECT_ID> <MONGO_PASSWORD>"}
-MONGO_PASSWORD=${2:?"Usage: $0 <PROJECT_ID> <MONGO_PASSWORD>"}
+# Usage: ./deploy-gcp.sh <PROJECT_ID>
+# Variables Firebase à définir dans l'environnement ou en arguments
+PROJECT_ID=${1:?"Usage: $0 <PROJECT_ID>"}
 REGION="europe-west1"
 REGISTRY="$REGION-docker.pkg.dev/$PROJECT_ID/rdv-manager"
 TF_DIR="$(dirname "$0")/terraform"
+
+: "${VITE_FIREBASE_API_KEY:?Variable VITE_FIREBASE_API_KEY requise}"
+: "${VITE_FIREBASE_AUTH_DOMAIN:?Variable VITE_FIREBASE_AUTH_DOMAIN requise}"
+: "${VITE_FIREBASE_PROJECT_ID:?Variable VITE_FIREBASE_PROJECT_ID requise}"
+: "${VITE_FIREBASE_STORAGE_BUCKET:?Variable VITE_FIREBASE_STORAGE_BUCKET requise}"
+: "${VITE_FIREBASE_MESSAGING_SENDER_ID:?Variable VITE_FIREBASE_MESSAGING_SENDER_ID requise}"
+: "${VITE_FIREBASE_APP_ID:?Variable VITE_FIREBASE_APP_ID requise}"
 
 echo "→ Projet GCP : $PROJECT_ID"
 echo "→ Région     : $REGION"
@@ -14,59 +21,37 @@ echo "→ Registre   : $REGISTRY"
 echo ""
 
 # 1. Authentification Docker vers Artifact Registry
-echo "[1/5] Authentification Artifact Registry..."
+echo "[1/3] Authentification Artifact Registry..."
 gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
 
-# 2. Terraform init + déploiement infrastructure (sans les images Cloud Run)
-echo "[2/5] Déploiement infrastructure (VPC, MongoDB, Artifact Registry)..."
+# 2. Terraform : infrastructure (Artifact Registry + Firestore + Cloud Run placeholder)
+echo "[2/3] Déploiement infrastructure..."
 cd "$TF_DIR"
 terraform init -upgrade
-
-# Premier apply : uniquement l'infra sans Cloud Run (images pas encore poussées)
 terraform apply \
   -var="project_id=$PROJECT_ID" \
-  -var="mongo_password=$MONGO_PASSWORD" \
-  -var="backend_image=gcr.io/cloudrun/placeholder" \
   -var="frontend_image=gcr.io/cloudrun/placeholder" \
+  -var="firebase_api_key=$VITE_FIREBASE_API_KEY" \
+  -var="firebase_auth_domain=$VITE_FIREBASE_AUTH_DOMAIN" \
+  -var="firebase_storage_bucket=$VITE_FIREBASE_STORAGE_BUCKET" \
+  -var="firebase_messaging_sender_id=$VITE_FIREBASE_MESSAGING_SENDER_ID" \
+  -var="firebase_app_id=$VITE_FIREBASE_APP_ID" \
   -target=google_project_service.apis \
   -target=google_artifact_registry_repository.repo \
-  -target=google_compute_network.vpc \
-  -target=google_compute_subnetwork.subnet \
-  -target=google_compute_subnetwork.connector_subnet \
-  -target=google_compute_router.router \
-  -target=google_compute_router_nat.nat \
-  -target=google_compute_disk.mongodb_data \
-  -target=google_compute_instance.mongodb \
-  -target=google_vpc_access_connector.connector \
+  -target=google_firestore_database.default \
   -target=google_service_account.cloudrun_sa \
   -auto-approve
 
-# 3. Build et push backend
-echo "[3/5] Build et push backend..."
-cd "$(dirname "$0")"
-docker build -t "$REGISTRY/backend:latest" ./backend
-docker push "$REGISTRY/backend:latest"
-
-# 4. Déployer le backend Cloud Run pour obtenir son URL
-echo "[4/5] Déploiement backend Cloud Run..."
-cd "$TF_DIR"
-terraform apply \
-  -var="project_id=$PROJECT_ID" \
-  -var="mongo_password=$MONGO_PASSWORD" \
-  -var="backend_image=$REGISTRY/backend:latest" \
-  -var="frontend_image=gcr.io/cloudrun/placeholder" \
-  -target=google_cloud_run_v2_service.backend \
-  -target=google_cloud_run_v2_service_iam_member.backend_public \
-  -auto-approve
-
-BACKEND_URL=$(terraform output -raw backend_url)
-echo "→ Backend URL : $BACKEND_URL"
-
-# 5. Build frontend avec l'URL backend, puis déployer
-echo "[5/5] Build et push frontend, déploiement..."
+# 3. Build + push frontend, déploiement Cloud Run
+echo "[3/3] Build, push et déploiement frontend..."
 cd "$(dirname "$0")"
 docker build \
-  --build-arg VITE_API_URL="$BACKEND_URL/api" \
+  --build-arg VITE_FIREBASE_API_KEY="$VITE_FIREBASE_API_KEY" \
+  --build-arg VITE_FIREBASE_AUTH_DOMAIN="$VITE_FIREBASE_AUTH_DOMAIN" \
+  --build-arg VITE_FIREBASE_PROJECT_ID="$VITE_FIREBASE_PROJECT_ID" \
+  --build-arg VITE_FIREBASE_STORAGE_BUCKET="$VITE_FIREBASE_STORAGE_BUCKET" \
+  --build-arg VITE_FIREBASE_MESSAGING_SENDER_ID="$VITE_FIREBASE_MESSAGING_SENDER_ID" \
+  --build-arg VITE_FIREBASE_APP_ID="$VITE_FIREBASE_APP_ID" \
   -t "$REGISTRY/frontend:latest" \
   ./frontend
 docker push "$REGISTRY/frontend:latest"
@@ -74,12 +59,14 @@ docker push "$REGISTRY/frontend:latest"
 cd "$TF_DIR"
 terraform apply \
   -var="project_id=$PROJECT_ID" \
-  -var="mongo_password=$MONGO_PASSWORD" \
-  -var="backend_image=$REGISTRY/backend:latest" \
   -var="frontend_image=$REGISTRY/frontend:latest" \
+  -var="firebase_api_key=$VITE_FIREBASE_API_KEY" \
+  -var="firebase_auth_domain=$VITE_FIREBASE_AUTH_DOMAIN" \
+  -var="firebase_storage_bucket=$VITE_FIREBASE_STORAGE_BUCKET" \
+  -var="firebase_messaging_sender_id=$VITE_FIREBASE_MESSAGING_SENDER_ID" \
+  -var="firebase_app_id=$VITE_FIREBASE_APP_ID" \
   -auto-approve
 
 echo ""
 echo "✓ Déploiement terminé !"
 echo "→ Frontend : $(terraform output -raw frontend_url)"
-echo "→ Backend  : $(terraform output -raw backend_url)"

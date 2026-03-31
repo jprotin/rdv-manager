@@ -1,19 +1,17 @@
 import { useState, useEffect } from 'react';
 import AddressSearch from '../common/AddressSearch.jsx';
 import PhoneInput from '../common/PhoneInput.jsx';
-import { appointmentsApi, clientsApi } from '../../services/api.js';
-import { saveLocalAppointment, registerBackgroundSync } from '../../services/db.js';
+import { appointmentsService, clientsService } from '../../services/firestore.js';
 import { useApp } from '../../context/AppContext.jsx';
 
 const toLocalDatetime = (date) => {
   const d = date || new Date();
-  // Round to next 30min
   d.setMinutes(d.getMinutes() < 30 ? 30 : 60, 0, 0);
   return d.toISOString().slice(0, 16);
 };
 
 export default function CreateAppointmentModal({ onClose, onSaved, initialDate }) {
-  const { isOnline, notify } = useApp();
+  const { notify } = useApp();
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [clientSearch, setClientSearch] = useState('');
@@ -40,18 +38,16 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
     status: 'pending',
   });
 
-  // Search existing clients while typing name
   useEffect(() => {
     if (!clientSearch || clientSearch.length < 2) { setClientResults([]); return; }
-    if (!isOnline) return;
     const t = setTimeout(async () => {
       try {
-        const { data } = await clientsApi.list({ search: clientSearch, limit: 5 });
-        setClientResults(data);
-      } catch { /* offline */ }
+        const results = await clientsService.getAll(clientSearch);
+        setClientResults(results.slice(0, 5));
+      } catch { /* ignore */ }
     }, 300);
     return () => clearTimeout(t);
-  }, [clientSearch, isOnline]);
+  }, [clientSearch]);
 
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
 
@@ -88,22 +84,20 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
 
     setSaving(true);
     try {
-      let client = selectedClient;
+      let clientId = selectedClient?._id || null;
 
-      if (!client) {
-        // Try to create client
-        if (isOnline) {
-          client = await clientsApi.create({
-            firstName: form.firstName.trim(),
-            lastName: form.lastName.trim(),
-            phone: form.phone.replace(/\s/g, ''),
-            address: form.address,
-          });
-        }
+      if (!clientId) {
+        const newClient = await clientsService.create({
+          firstName: form.firstName.trim(),
+          lastName: form.lastName.trim(),
+          phone: form.phone.replace(/\s/g, ''),
+          address: form.address,
+        });
+        clientId = newClient._id;
       }
 
-      const appointmentData = {
-        client: client?._id,
+      await appointmentsService.create({
+        clientId,
         title: form.title.trim(),
         description: form.description.trim(),
         notes: form.notes.trim(),
@@ -111,15 +105,7 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
         endAt: form.endAt,
         status: form.status,
         address: form.address,
-      };
-
-      if (isOnline && client?._id) {
-        await appointmentsApi.create(appointmentData);
-      } else {
-        // Save locally for later sync
-        await saveLocalAppointment({ ...appointmentData, _synced: false });
-        registerBackgroundSync();
-      }
+      });
 
       notify('success', 'Rendez-vous enregistré');
       onSaved();
@@ -134,14 +120,12 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4">
       <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full sm:max-w-lg max-h-[92vh] overflow-y-auto">
-        {/* Header */}
         <div className="sticky top-0 bg-white px-5 py-4 border-b border-gray-100 flex items-center justify-between rounded-t-3xl sm:rounded-t-2xl z-10">
           <h2 className="text-lg font-semibold text-gray-800">Nouveau rendez-vous</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {/* Title */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Intitulé *</label>
             <input
@@ -154,7 +138,6 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
             {errors.title && <p className="text-red-500 text-xs mt-1">{errors.title}</p>}
           </div>
 
-          {/* Date & Time */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Début *</label>
@@ -178,12 +161,10 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
             </div>
           </div>
 
-          {/* Client */}
           <div className="border-t border-gray-100 pt-4">
             <p className="text-sm font-medium text-gray-700 mb-3">Client</p>
 
-            {/* Client search */}
-            {isOnline && !selectedClient && (
+            {!selectedClient && (
               <div className="relative mb-3">
                 <input
                   type="text"
@@ -245,7 +226,6 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
             </div>
           </div>
 
-          {/* Status */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Statut</label>
             <select className="input" value={form.status} onChange={(e) => set('status', e.target.value)}>
@@ -256,13 +236,11 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
             </select>
           </div>
 
-          {/* Description */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <textarea className="input resize-none" rows={2} value={form.description} onChange={(e) => set('description', e.target.value)} placeholder="Détails du rendez-vous..." />
           </div>
 
-          {/* Notes */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes complémentaires</label>
             <textarea className="input resize-none" rows={2} value={form.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Remarques internes..." />
@@ -270,13 +248,6 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
 
           {errors.submit && <p className="text-red-500 text-sm">{errors.submit}</p>}
 
-          {!isOnline && (
-            <p className="text-amber-600 text-xs bg-amber-50 rounded-xl px-3 py-2">
-              Vous êtes hors ligne — le rendez-vous sera synchronisé à la reconnexion.
-            </p>
-          )}
-
-          {/* Actions */}
           <div className="flex gap-3 pt-2 pb-2">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">
               Annuler

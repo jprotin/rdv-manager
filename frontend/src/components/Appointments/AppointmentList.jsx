@@ -1,14 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import AppointmentCard from './AppointmentCard.jsx';
 import CreateAppointmentModal from './CreateAppointmentModal.jsx';
-import { appointmentsApi } from '../../services/api.js';
-import { getLocalAppointments } from '../../services/db.js';
-import { useApp } from '../../context/AppContext.jsx';
+import { appointmentsService } from '../../services/firestore.js';
 
 const PAGE_SIZE = 20;
 
 export default function AppointmentList() {
-  const { isOnline } = useApp();
   const [appointments, setAppointments] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -19,31 +16,23 @@ export default function AppointmentList() {
   const fetchAppointments = useCallback(async () => {
     setLoading(true);
     try {
-      if (isOnline) {
-        const params = { page, limit: PAGE_SIZE };
-        if (filters.status) params.status = filters.status;
-        if (filters.from) params.from = new Date(filters.from).toISOString();
-        if (filters.to) {
-          const end = new Date(filters.to);
-          end.setHours(23, 59, 59, 999);
-          params.to = end.toISOString();
-        }
-        const res = await appointmentsApi.list(params);
-        setAppointments(res.data);
-        setTotal(res.total);
-      } else {
-        const local = await getLocalAppointments(filters.status ? { status: filters.status } : {});
-        setAppointments(local.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE));
-        setTotal(local.length);
+      const params = { page, limit: PAGE_SIZE };
+      if (filters.status) params.status = filters.status;
+      if (filters.from) params.from = new Date(filters.from).toISOString();
+      if (filters.to) {
+        const end = new Date(filters.to);
+        end.setHours(23, 59, 59, 999);
+        params.to = end.toISOString();
       }
-    } catch {
-      const local = await getLocalAppointments({});
-      setAppointments(local);
-      setTotal(local.length);
+      const res = await appointmentsService.getAll(params);
+      setAppointments(res.data);
+      setTotal(res.total);
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [isOnline, page, filters]);
+  }, [page, filters]);
 
   useEffect(() => { fetchAppointments(); }, [fetchAppointments]);
 
@@ -57,7 +46,6 @@ export default function AppointmentList() {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-800">Rendez-vous</h1>
@@ -72,7 +60,6 @@ export default function AppointmentList() {
         </button>
       </div>
 
-      {/* Filters */}
       <div className="card !p-3 flex flex-wrap gap-2">
         <select
           value={filters.status}
@@ -90,14 +77,12 @@ export default function AppointmentList() {
           value={filters.from}
           onChange={(e) => { setFilters((f) => ({ ...f, from: e.target.value })); setPage(1); }}
           className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700 focus:outline-none"
-          placeholder="Du"
         />
         <input
           type="date"
           value={filters.to}
           onChange={(e) => { setFilters((f) => ({ ...f, to: e.target.value })); setPage(1); }}
           className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700 focus:outline-none"
-          placeholder="Au"
         />
         {hasFilters && (
           <button onClick={resetFilters} className="text-sm text-gray-500 hover:text-gray-700 px-2">
@@ -106,7 +91,6 @@ export default function AppointmentList() {
         )}
       </div>
 
-      {/* List */}
       {loading ? (
         <div className="text-center py-10 text-gray-400">Chargement...</div>
       ) : appointments.length === 0 ? (
@@ -119,7 +103,6 @@ export default function AppointmentList() {
         </div>
       )}
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-3 py-2">
           <button

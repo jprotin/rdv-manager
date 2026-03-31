@@ -1,0 +1,22 @@
+# Données de l'émulateur Firestore (persistance locale)
+emulator-data/
+
+# Variables d'environnement
+.env
+frontend/.env
+frontend/.env.local
+
+# Dépendances
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Build
+frontend/dist/
+
+# Terraform state
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
