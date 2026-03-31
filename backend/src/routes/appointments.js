@@ -53,6 +53,28 @@ router.get('/today', async (req, res, next) => {
   }
 });
 
+// GET /api/appointments/tomorrow
+router.get('/tomorrow', async (req, res, next) => {
+  try {
+    const start = new Date();
+    start.setDate(start.getDate() + 1);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setHours(23, 59, 59, 999);
+
+    const appointments = await Appointment.find({
+      startAt: { $gte: start, $lte: end },
+      deletedAt: null,
+    })
+      .populate('client', 'firstName lastName phone address')
+      .sort({ startAt: 1 });
+
+    res.json({ data: appointments });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/appointments/week
 router.get('/week', async (req, res, next) => {
   try {

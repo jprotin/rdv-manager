@@ -5,6 +5,12 @@ import { appointmentsApi } from '../../services/api.js';
 import { getLocalAppointments } from '../../services/db.js';
 import { useApp } from '../../context/AppContext.jsx';
 
+function tomorrowLabel() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
 function todayLabel() {
   return new Date().toLocaleDateString('fr-FR', {
     weekday: 'long',
@@ -17,6 +23,7 @@ function todayLabel() {
 export default function Dashboard() {
   const { isOnline } = useApp();
   const [appointments, setAppointments] = useState([]);
+  const [tomorrowAppointments, setTomorrowAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
 
@@ -24,14 +31,21 @@ export default function Dashboard() {
     setLoading(true);
     try {
       if (isOnline) {
-        const { data } = await appointmentsApi.today();
-        setAppointments(data);
+        const [todayRes, tomorrowRes] = await Promise.all([
+          appointmentsApi.today(),
+          appointmentsApi.tomorrow(),
+        ]);
+        setAppointments(todayRes.data);
+        setTomorrowAppointments(tomorrowRes.data);
       } else {
-        const local = await getLocalAppointments({ today: true });
-        setAppointments(local);
+        const todayLocal = await getLocalAppointments({ today: true });
+        setAppointments(todayLocal);
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowLocal = await getLocalAppointments({ date: tomorrow.toISOString().slice(0, 10) });
+        setTomorrowAppointments(tomorrowLocal);
       }
     } catch {
-      // Fallback to local DB on any error
       const local = await getLocalAppointments({ today: true });
       setAppointments(local);
     } finally {
@@ -83,7 +97,7 @@ export default function Dashboard() {
         onRefresh={fetchAppointments}
       />
 
-      {/* Completed */}
+      {/* Completed today */}
       {completed.length > 0 && (
         <AppointmentBlock
           title="Réalisés aujourd'hui"
@@ -92,6 +106,25 @@ export default function Dashboard() {
           onRefresh={fetchAppointments}
         />
       )}
+
+      {/* Tomorrow */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="font-semibold text-gray-700">Demain</h2>
+            <p className="text-xs text-gray-400 capitalize">{tomorrowLabel()}</p>
+          </div>
+          <span className="bg-indigo-100 text-indigo-700 text-xs font-semibold px-2.5 py-1 rounded-full">
+            {tomorrowAppointments.length}
+          </span>
+        </div>
+        <AppointmentBlock
+          appointments={tomorrowAppointments}
+          loading={loading}
+          onRefresh={fetchAppointments}
+          hideHeader
+        />
+      </div>
 
       {/* Modal */}
       {showModal && (

@@ -1,4 +1,4 @@
-const BASE_URL = '/api';
+const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 async function request(method, path, body) {
   const opts = {
@@ -31,6 +31,7 @@ export const clientsApi = {
 export const appointmentsApi = {
   list: (params = {}) => request('GET', `/appointments?${new URLSearchParams(params)}`),
   today: () => request('GET', '/appointments/today'),
+  tomorrow: () => request('GET', '/appointments/tomorrow'),
   week: () => request('GET', '/appointments/week'),
   sync: (since) => request('GET', `/appointments/sync?since=${encodeURIComponent(since)}`),
   get: (id) => request('GET', `/appointments/${id}`),

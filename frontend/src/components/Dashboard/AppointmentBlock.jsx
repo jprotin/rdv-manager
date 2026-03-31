@@ -6,7 +6,7 @@ function formatTime(iso) {
   return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function AppointmentBlock({ title, appointments, loading, onRefresh }) {
+export default function AppointmentBlock({ title, appointments, loading, onRefresh, hideHeader = false }) {
   const { isOnline, notify } = useApp();
 
   const handleStatusChange = async (id, status) => {
@@ -21,13 +21,15 @@ export default function AppointmentBlock({ title, appointments, loading, onRefre
   };
 
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="font-semibold text-gray-700">{title}</h2>
-        <span className="bg-primary-100 text-primary-700 text-xs font-semibold px-2.5 py-1 rounded-full">
-          {appointments.length}
-        </span>
-      </div>
+    <div className={hideHeader ? '' : 'card'}>
+      {!hideHeader && (
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-semibold text-gray-700">{title}</h2>
+          <span className="bg-primary-100 text-primary-700 text-xs font-semibold px-2.5 py-1 rounded-full">
+            {appointments.length}
+          </span>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-6 text-gray-400 text-sm">Chargement...</div>
