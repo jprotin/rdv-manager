@@ -17,7 +17,6 @@ export default function BurgerMenu({ open, onClose }) {
 
   return (
     <>
-      {/* Backdrop */}
       <div
         className={`fixed inset-0 bg-black/50 z-40 transition-opacity duration-200 ${
           open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
@@ -25,13 +24,13 @@ export default function BurgerMenu({ open, onClose }) {
         onClick={onClose}
       />
 
-      {/* Drawer */}
       <aside
         className={`fixed left-0 top-0 h-full w-72 bg-white z-50 shadow-2xl flex flex-col
           transition-transform duration-200 ease-out ${open ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <div className="px-5 py-4 bg-primary-600 text-white flex items-center justify-between">
-          <span className="font-bold text-lg">RDV Manager</span>
+        {/* 30% — En-tête du drawer : Gris Ardoise */}
+        <div className="px-5 py-4 bg-primary-500 text-white flex items-center justify-between">
+          <span className="font-bold text-lg text-snow">RDV Manager</span>
           <button
             onClick={onClose}
             className="text-2xl leading-none hover:text-white/70 transition-colors"
@@ -51,8 +50,8 @@ export default function BurgerMenu({ open, onClose }) {
               className={({ isActive }) =>
                 `flex items-center gap-3 mx-3 px-4 py-3 rounded-xl font-medium transition-colors ${
                   isActive
-                    ? 'bg-primary-50 text-primary-700'
-                    : 'text-gray-600 hover:bg-gray-100'
+                    ? 'bg-primary-50 text-primary-500'   /* 10% — actif : Orchidée */
+                    : 'text-ink-700 hover:bg-ink-50'     /* 30% — inactif : Gris Ardoise */
                 }`
               }
             >
@@ -62,8 +61,8 @@ export default function BurgerMenu({ open, onClose }) {
           ))}
         </nav>
 
-        <div className="p-4 border-t border-gray-100">
-          <button className="flex items-center gap-3 w-full px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors">
+        <div className="p-4 border-t border-ink-100">
+          <button className="flex items-center gap-3 w-full px-4 py-3 text-red-500 hover:bg-red-50 rounded-xl font-medium transition-colors">
             <span className="text-lg">🚪</span>
             Déconnexion
           </button>

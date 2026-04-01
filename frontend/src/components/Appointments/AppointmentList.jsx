@@ -1,7 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import AppointmentCard from './AppointmentCard.jsx';
 import CreateAppointmentModal from './CreateAppointmentModal.jsx';
+import DateTimePicker, { formatDateOnly } from '../common/DateTimePicker.jsx';
+import SelectPicker from '../common/SelectPicker.jsx';
 import { appointmentsService } from '../../services/firestore.js';
+
+const STATUS_OPTIONS = [
+  { value: '',          label: 'Tous les statuts' },
+  { value: 'pending',   label: 'En attente' },
+  { value: 'confirmed', label: 'Confirmé' },
+  { value: 'completed', label: 'Réalisé' },
+  { value: 'cancelled', label: 'Annulé' },
+];
 
 const PAGE_SIZE = 20;
 
@@ -12,6 +22,8 @@ export default function AppointmentList() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [filters, setFilters] = useState({ status: '', from: '', to: '' });
+  const [datePicker, setDatePicker]     = useState(null);  // 'from' | 'to' | null
+  const [statusPicker, setStatusPicker] = useState(false);
 
   const fetchAppointments = useCallback(async () => {
     setLoading(true);
@@ -61,29 +73,36 @@ export default function AppointmentList() {
       </div>
 
       <div className="card !p-3 flex flex-wrap gap-2">
-        <select
-          value={filters.status}
-          onChange={(e) => { setFilters((f) => ({ ...f, status: e.target.value })); setPage(1); }}
-          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700 focus:outline-none"
+        <button
+          type="button"
+          onClick={() => setStatusPicker(true)}
+          className={`border rounded-lg px-3 py-1.5 text-sm bg-white transition-colors
+            ${filters.status
+              ? 'border-primary-300 text-primary-600 font-medium'
+              : 'border-ink-200 text-ink-400 hover:border-primary-300'}`}
         >
-          <option value="">Tous les statuts</option>
-          <option value="pending">En attente</option>
-          <option value="confirmed">Confirmé</option>
-          <option value="completed">Réalisé</option>
-          <option value="cancelled">Annulé</option>
-        </select>
-        <input
-          type="date"
-          value={filters.from}
-          onChange={(e) => { setFilters((f) => ({ ...f, from: e.target.value })); setPage(1); }}
-          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700 focus:outline-none"
-        />
-        <input
-          type="date"
-          value={filters.to}
-          onChange={(e) => { setFilters((f) => ({ ...f, to: e.target.value })); setPage(1); }}
-          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700 focus:outline-none"
-        />
+          {STATUS_OPTIONS.find(o => o.value === filters.status)?.label ?? 'Tous les statuts'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setDatePicker('from')}
+          className={`border rounded-lg px-3 py-1.5 text-sm bg-white transition-colors
+            ${filters.from
+              ? 'border-primary-300 text-primary-600 font-medium'
+              : 'border-ink-200 text-ink-400 hover:border-primary-300'}`}
+        >
+          {filters.from ? formatDateOnly(filters.from) : 'Du…'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setDatePicker('to')}
+          className={`border rounded-lg px-3 py-1.5 text-sm bg-white transition-colors
+            ${filters.to
+              ? 'border-primary-300 text-primary-600 font-medium'
+              : 'border-ink-200 text-ink-400 hover:border-primary-300'}`}
+        >
+          {filters.to ? formatDateOnly(filters.to) : 'Au…'}
+        </button>
         {hasFilters && (
           <button onClick={resetFilters} className="text-sm text-gray-500 hover:text-gray-700 px-2">
             Réinitialiser ×
@@ -127,6 +146,36 @@ export default function AppointmentList() {
         <CreateAppointmentModal
           onClose={() => setShowModal(false)}
           onSaved={() => { setShowModal(false); fetchAppointments(); }}
+        />
+      )}
+
+      {statusPicker && (
+        <SelectPicker
+          label="Filtrer par statut"
+          value={filters.status}
+          options={STATUS_OPTIONS}
+          onChange={(v) => { setFilters(f => ({ ...f, status: v })); setPage(1); }}
+          onClose={() => setStatusPicker(false)}
+        />
+      )}
+
+      {datePicker === 'from' && (
+        <DateTimePicker
+          dateOnly
+          label="Filtrer à partir du"
+          value={filters.from}
+          onChange={(v) => { setFilters(f => ({ ...f, from: v })); setPage(1); }}
+          onClose={() => setDatePicker(null)}
+        />
+      )}
+
+      {datePicker === 'to' && (
+        <DateTimePicker
+          dateOnly
+          label="Filtrer jusqu'au"
+          value={filters.to}
+          onChange={(v) => { setFilters(f => ({ ...f, to: v })); setPage(1); }}
+          onClose={() => setDatePicker(null)}
         />
       )}
     </div>

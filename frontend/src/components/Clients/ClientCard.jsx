@@ -51,9 +51,15 @@ export default function ClientCard({ client, onUpdate }) {
       {expanded && (
         <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
           {client.address?.label && (
-            <p className="text-sm text-gray-600">
-              <span className="text-gray-400 mr-1">📍</span>{client.address.label}
-            </p>
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(client.address.label)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-gray-600 hover:text-primary-600 flex items-start gap-1 group"
+            >
+              <span className="shrink-0">📍</span>
+              <span className="group-hover:underline">{client.address.label}</span>
+            </a>
           )}
           {client.email && (
             <p className="text-sm text-gray-600">

@@ -49,7 +49,16 @@ export default function AppointmentBlock({ title, appointments, loading, onRefre
                     {apt.client.phone && <span className="ml-1 text-gray-400">• {apt.client.phone}</span>}
                   </p>
                 )}
-                {apt.address?.label && <p className="text-xs text-gray-400 truncate mt-0.5">{apt.address.label}</p>}
+                {apt.address?.label && (
+                  <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(apt.address.label)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-gray-400 hover:text-primary-600 truncate mt-0.5 hover:underline block"
+                  >
+                    📍 {apt.address.label}
+                  </a>
+                )}
                 {apt.notes && <p className="text-xs text-gray-400 italic mt-0.5">{apt.notes}</p>}
               </div>
               <div className="shrink-0 flex flex-col gap-1.5 items-end">

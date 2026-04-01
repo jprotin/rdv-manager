@@ -43,8 +43,8 @@ export default function Dashboard() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-gray-800 capitalize">{todayLabel()}</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{todayApts.length} rendez-vous aujourd'hui</p>
+          <h1 className="text-xl font-bold text-ink-700 capitalize">{todayLabel()}</h1>
+          <p className="text-sm text-ink-400 mt-0.5">{todayApts.length} rendez-vous aujourd'hui</p>
         </div>
         <button
           onClick={() => setShowModal(true)}
@@ -55,12 +55,12 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-2 gap-3">
         <div className="card text-center py-5">
-          <div className="text-3xl font-bold text-primary-600">{pending.length}</div>
-          <div className="text-xs text-gray-500 mt-1 font-medium">À venir</div>
+          <div className="text-3xl font-bold text-primary-500">{pending.length}</div>
+          <div className="text-xs text-ink-400 mt-1 font-medium">À venir</div>
         </div>
         <div className="card text-center py-5">
-          <div className="text-3xl font-bold text-green-600">{completed.length}</div>
-          <div className="text-xs text-gray-500 mt-1 font-medium">Réalisés</div>
+          <div className="text-3xl font-bold text-mint-500">{completed.length}</div>
+          <div className="text-xs text-ink-400 mt-1 font-medium">Réalisés</div>
         </div>
       </div>
 
@@ -73,10 +73,10 @@ export default function Dashboard() {
       <div className="card">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h2 className="font-semibold text-gray-700">Demain</h2>
-            <p className="text-xs text-gray-400 capitalize">{tomorrowLabel()}</p>
+            <h2 className="font-semibold text-ink-700">Demain</h2>
+            <p className="text-xs text-ink-400 capitalize">{tomorrowLabel()}</p>
           </div>
-          <span className="bg-indigo-100 text-indigo-700 text-xs font-semibold px-2.5 py-1 rounded-full">
+          <span className="bg-primary-100 text-primary-500 text-xs font-semibold px-2.5 py-1 rounded-full">
             {tomorrowApts.length}
           </span>
         </div>
