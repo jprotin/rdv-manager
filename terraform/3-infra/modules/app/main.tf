@@ -77,13 +77,6 @@ resource "google_cloud_run_v2_service" "frontend" {
     }
   }
 
-  # IAP natif Cloud Run
-  iap {
-    enabled              = true
-    oauth2_client_id     = google_iap_client.default.client_id
-    oauth2_client_secret = google_iap_client.default.secret
-  }
-
   lifecycle {
     ignore_changes = [
       template[0].containers[0].image,
