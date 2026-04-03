@@ -40,6 +40,7 @@ resource "google_project_service" "apis" {
     "cloudidentity.googleapis.com",
     "storage.googleapis.com",
     "secretmanager.googleapis.com",
+    "iap.googleapis.com",
   ])
   project            = google_project.project.project_id
   service            = each.value
@@ -120,6 +121,13 @@ resource "google_service_account_iam_member" "wif_binding" {
 resource "google_project_iam_member" "project_owner_editor" {
   project = google_project.project.project_id
   role    = "roles/editor"
+  member  = "user:${var.project_owner_email}"
+}
+
+# ── IAP admin pour pouvoir configurer IAP depuis la console
+resource "google_project_iam_member" "project_owner_iap_admin" {
+  project = google_project.project.project_id
+  role    = "roles/iap.admin"
   member  = "user:${var.project_owner_email}"
 }
 
