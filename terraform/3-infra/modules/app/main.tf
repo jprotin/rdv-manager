@@ -11,8 +11,15 @@ variable "project_id"    { type = string }
 variable "region"        { default = "europe-west1" }
 variable "service_name"  { default = "rdv-frontend" }
 variable "image"         { default = "nginx:alpine" }  # remplacé par le pipeline CI/CD
-variable "support_email" { type = string; description = "Email affiché sur l'écran de consentement IAP" }
-variable "iap_members"   { type = list(string); description = "Identités Google autorisées (ex: ['user:alice@example.com'])" }
+variable "support_email" {
+  type        = string
+  description = "Email affiché sur l'écran de consentement IAP"
+}
+
+variable "iap_members" {
+  type        = list(string)
+  description = "Identités Google autorisées (ex: ['user:alice@example.com'])"
+}
 
 # ── Artifact Registry
 resource "google_artifact_registry_repository" "rdv_manager" {
