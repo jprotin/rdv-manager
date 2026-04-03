@@ -67,15 +67,13 @@ resource "google_cloud_run_v2_service" "frontend" {
   }
 }
 
-# ── Accès restreint aux membres autorisés uniquement
-resource "google_cloud_run_v2_service_iam_member" "invoker" {
-  for_each = toset(var.authorized_members)
-
+# ── Accès restreint aux membres autorisés uniquement (binding autoritatif — écrase allUsers)
+resource "google_cloud_run_v2_service_iam_binding" "invoker" {
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.frontend.name
   role     = "roles/run.invoker"
-  member   = each.value
+  members  = var.authorized_members
 }
 
 output "service_url" {
