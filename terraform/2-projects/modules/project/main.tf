@@ -131,6 +131,13 @@ resource "google_project_iam_member" "project_owner_iap_admin" {
   member  = "user:${var.project_owner_email}"
 }
 
+# ── Run admin pour pouvoir gérer les IAM policies Cloud Run depuis la console
+resource "google_project_iam_member" "project_owner_run_admin" {
+  project = google_project.project.project_id
+  role    = "roles/run.admin"
+  member  = "user:${var.project_owner_email}"
+}
+
 # ── Outputs
 output "project_id" {
   value = google_project.project.project_id
