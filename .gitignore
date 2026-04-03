@@ -14,9 +14,9 @@ backend/node_modules/
 # Build
 frontend/dist/
 
-# Terraform state
-terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.backup
-terraform/.terraform.lock.hcl
-terraform/terraform.tfvars
+# Terraform — tous les sous-dossiers
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars.backup

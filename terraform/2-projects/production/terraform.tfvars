@@ -1,0 +1,5 @@
+project_id          = "rdv-manager-prod"
+billing_account_id  = "0197BD-386347-ADCA30"
+github_owner        = "jprotin"
+github_repo         = "rdv-manager"
+project_owner_email = "johan.protin@nantares.com"

@@ -1,0 +1,117 @@
+name: Deploy — Production
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  PROJECT_ID: rdv-manager-prod
+  REGION: europe-west1
+  SERVICE_NAME: rdv-frontend
+  REGISTRY: europe-west1-docker.pkg.dev/rdv-manager-prod/rdv-manager
+
+jobs:
+  build-push:
+    name: Build & push image de production
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      version: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          IMAGE="${{ env.REGISTRY }}/frontend:${VERSION}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "image=${IMAGE}"     >> $GITHUB_OUTPUT
+
+      - name: Authenticate to GCP
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_PROD }}
+          service_account: ${{ secrets.SA_EMAIL_PROD }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build & push Docker image
+        run: |
+          IMAGE="${{ steps.meta.outputs.image }}"
+          docker build \
+            --build-arg VITE_FIREBASE_API_KEY="${{ secrets.PROD_FIREBASE_API_KEY }}" \
+            --build-arg VITE_FIREBASE_AUTH_DOMAIN="${{ secrets.PROD_FIREBASE_AUTH_DOMAIN }}" \
+            --build-arg VITE_FIREBASE_PROJECT_ID="${{ env.PROJECT_ID }}" \
+            --build-arg VITE_FIREBASE_STORAGE_BUCKET="${{ secrets.PROD_FIREBASE_STORAGE_BUCKET }}" \
+            --build-arg VITE_FIREBASE_MESSAGING_SENDER_ID="${{ secrets.PROD_FIREBASE_MESSAGING_SENDER_ID }}" \
+            --build-arg VITE_FIREBASE_APP_ID="${{ secrets.PROD_FIREBASE_APP_ID }}" \
+            -t "$IMAGE" \
+            ./frontend
+          docker push "$IMAGE"
+          docker tag "$IMAGE" "${{ env.REGISTRY }}/frontend:latest"
+          docker push "${{ env.REGISTRY }}/frontend:latest"
+
+  deploy:
+    name: Deploy production
+    needs: build-push
+    runs-on: ubuntu-latest
+    environment: production
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_PROD }}
+          service_account: ${{ secrets.SA_EMAIL_PROD }}
+          create_credentials_file: true
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image="${{ needs.build-push.outputs.image }}" \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --quiet
+
+      - name: Deploy Firestore rules & indexes
+        run: |
+          npm install -g firebase-tools@latest
+          firebase deploy \
+            --only firestore:rules,firestore:indexes \
+            --project=${{ env.PROJECT_ID }} \
+            --non-interactive
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+
+      - name: Production deployment summary
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --format='value(status.url)')
+          echo "### Production déployée ✅" >> $GITHUB_STEP_SUMMARY
+          echo "Version : \`${{ needs.build-push.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "URL : $URL" >> $GITHUB_STEP_SUMMARY
