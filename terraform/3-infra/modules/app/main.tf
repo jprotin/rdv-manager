@@ -7,18 +7,13 @@ terraform {
   }
 }
 
-variable "project_id"    { type = string }
-variable "region"        { default = "europe-west1" }
-variable "service_name"  { default = "rdv-frontend" }
-variable "image"         { default = "nginx:alpine" }  # remplacé par le pipeline CI/CD
-variable "support_email" {
-  type        = string
-  description = "Email affiché sur l'écran de consentement IAP"
-}
-
-variable "iap_members" {
+variable "project_id"          { type = string }
+variable "region"               { default = "europe-west1" }
+variable "service_name"         { default = "rdv-frontend" }
+variable "image"                { default = "nginx:alpine" }
+variable "authorized_members"   {
   type        = list(string)
-  description = "Identités Google autorisées (ex: ['user:alice@example.com'])"
+  description = "Identités Google autorisées à invoquer le service (ex: ['user:alice@nantares.com'])"
 }
 
 # ── Artifact Registry
@@ -43,20 +38,7 @@ resource "google_project_iam_member" "cloud_run_firestore" {
   member  = "serviceAccount:${google_service_account.cloud_run.email}"
 }
 
-# ── IAP Brand (écran de consentement OAuth — 1 seul par projet)
-resource "google_iap_brand" "default" {
-  project           = var.project_id
-  support_email     = var.support_email
-  application_title = "RDV Manager"
-}
-
-# ── IAP OAuth Client
-resource "google_iap_client" "default" {
-  brand        = google_iap_brand.default.name
-  display_name = "RDV Manager IAP Client"
-}
-
-# ── Cloud Run Service avec IAP natif
+# ── Cloud Run Service (pas d'accès public)
 resource "google_cloud_run_v2_service" "frontend" {
   name     = var.service_name
   location = var.region
@@ -85,9 +67,9 @@ resource "google_cloud_run_v2_service" "frontend" {
   }
 }
 
-# ── Accès restreint via IAP (remplace allUsers)
-resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
-  for_each = toset(var.iap_members)
+# ── Accès restreint aux membres autorisés uniquement
+resource "google_cloud_run_v2_service_iam_member" "invoker" {
+  for_each = toset(var.authorized_members)
 
   project  = var.project_id
   location = var.region
