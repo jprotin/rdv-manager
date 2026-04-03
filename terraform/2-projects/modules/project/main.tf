@@ -76,6 +76,7 @@ resource "google_project_iam_member" "github_actions_roles" {
     "roles/iam.serviceAccountUser",
     "roles/firebase.admin",
     "roles/datastore.owner",
+    "roles/serviceusage.serviceUsageConsumer",
   ])
   project = google_project.project.project_id
   role    = each.value
