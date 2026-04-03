@@ -25,8 +25,10 @@ data "terraform_remote_state" "projects_production" {
 }
 
 module "app" {
-  source     = "../modules/app"
-  project_id = data.terraform_remote_state.projects_production.outputs.project_id
+  source         = "../modules/app"
+  project_id     = data.terraform_remote_state.projects_production.outputs.project_id
+  support_email  = var.support_email
+  iap_members    = var.iap_members
 }
 
 output "service_url"  { value = module.app.service_url }

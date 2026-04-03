@@ -40,6 +40,7 @@ resource "google_project_service" "apis" {
     "cloudidentity.googleapis.com",
     "storage.googleapis.com",
     "secretmanager.googleapis.com",
+    "iap.googleapis.com",
   ])
   project            = google_project.project.project_id
   service            = each.value

@@ -7,10 +7,12 @@ terraform {
   }
 }
 
-variable "project_id"  { type = string }
-variable "region"      { default = "europe-west1" }
-variable "service_name" { default = "rdv-frontend" }
-variable "image"       { default = "nginx:alpine" }  # remplacé par le pipeline CI/CD
+variable "project_id"    { type = string }
+variable "region"        { default = "europe-west1" }
+variable "service_name"  { default = "rdv-frontend" }
+variable "image"         { default = "nginx:alpine" }  # remplacé par le pipeline CI/CD
+variable "support_email" { type = string; description = "Email affiché sur l'écran de consentement IAP" }
+variable "iap_members"   { type = list(string); description = "Identités Google autorisées (ex: ['user:alice@example.com'])" }
 
 # ── Artifact Registry
 resource "google_artifact_registry_repository" "rdv_manager" {
@@ -34,7 +36,20 @@ resource "google_project_iam_member" "cloud_run_firestore" {
   member  = "serviceAccount:${google_service_account.cloud_run.email}"
 }
 
-# ── Cloud Run Service
+# ── IAP Brand (écran de consentement OAuth — 1 seul par projet)
+resource "google_iap_brand" "default" {
+  project           = var.project_id
+  support_email     = var.support_email
+  application_title = "RDV Manager"
+}
+
+# ── IAP OAuth Client
+resource "google_iap_client" "default" {
+  brand        = google_iap_brand.default.name
+  display_name = "RDV Manager IAP Client"
+}
+
+# ── Cloud Run Service avec IAP natif
 resource "google_cloud_run_v2_service" "frontend" {
   name     = var.service_name
   location = var.region
@@ -55,6 +70,13 @@ resource "google_cloud_run_v2_service" "frontend" {
     }
   }
 
+  # IAP natif Cloud Run
+  iap {
+    enabled              = true
+    oauth2_client_id     = google_iap_client.default.client_id
+    oauth2_client_secret = google_iap_client.default.secret
+  }
+
   lifecycle {
     ignore_changes = [
       template[0].containers[0].image,
@@ -63,13 +85,15 @@ resource "google_cloud_run_v2_service" "frontend" {
   }
 }
 
-# ── Accès public (unauthenticated)
-resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
+# ── Accès restreint via IAP (remplace allUsers)
+resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
+  for_each = toset(var.iap_members)
+
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.frontend.name
   role     = "roles/run.invoker"
-  member   = "allUsers"
+  member   = each.value
 }
 
 output "service_url" {
