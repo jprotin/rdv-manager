@@ -5,6 +5,7 @@ services:
       dockerfile: emulator/Dockerfile
     ports:
       - "8080:8080"   # Firestore
+      - "9099:9099"   # Auth
       - "4000:4000"   # Emulator UI
     volumes:
       - ./firebase.json:/app/firebase.json:ro

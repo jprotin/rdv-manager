@@ -8,7 +8,7 @@ RUN npm install -g firebase-tools
 
 # Pré-télécharger les jars et l'UI au moment du build
 # (évite les téléchargements réseau au démarrage du conteneur)
-RUN firebase setup:emulators:firestore && firebase setup:emulators:ui
+RUN firebase setup:emulators:firestore && firebase setup:emulators:ui && firebase setup:emulators:auth
 
 WORKDIR /app
 
