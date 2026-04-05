@@ -7,14 +7,10 @@ terraform {
   }
 }
 
-variable "project_id"          { type = string }
-variable "region"               { default = "europe-west1" }
-variable "service_name"         { default = "rdv-frontend" }
-variable "image"                { default = "nginx:alpine" }
-variable "authorized_members"   {
-  type        = list(string)
-  description = "Identités Google autorisées à invoquer le service (ex: ['user:alice@nantares.com'])"
-}
+variable "project_id"   { type = string }
+variable "region"       { default = "europe-west1" }
+variable "service_name" { default = "rdv-frontend" }
+variable "image"        { default = "nginx:alpine" }
 
 # ── Artifact Registry
 resource "google_artifact_registry_repository" "rdv_manager" {
@@ -38,7 +34,7 @@ resource "google_project_iam_member" "cloud_run_firestore" {
   member  = "serviceAccount:${google_service_account.cloud_run.email}"
 }
 
-# ── Cloud Run Service (pas d'accès public)
+# ── Cloud Run Service
 resource "google_cloud_run_v2_service" "frontend" {
   name     = var.service_name
   location = var.region
@@ -67,13 +63,13 @@ resource "google_cloud_run_v2_service" "frontend" {
   }
 }
 
-# ── Accès restreint aux membres autorisés uniquement (binding autoritatif — écrase allUsers)
-resource "google_cloud_run_v2_service_iam_binding" "invoker" {
+# ── Accès public — la sécurité est portée par Firebase Auth + Firestore rules
+resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.frontend.name
   role     = "roles/run.invoker"
-  members  = var.authorized_members
+  member   = "allUsers"
 }
 
 output "service_url" {

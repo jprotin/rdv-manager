@@ -40,6 +40,7 @@ resource "google_project_service" "apis" {
     "cloudidentity.googleapis.com",
     "storage.googleapis.com",
     "secretmanager.googleapis.com",
+    "identitytoolkit.googleapis.com",
   ])
   project            = google_project.project.project_id
   service            = each.value
@@ -122,6 +123,7 @@ resource "google_project_iam_member" "project_owner_editor" {
   role    = "roles/editor"
   member  = "user:${var.project_owner_email}"
 }
+
 
 # ── Outputs
 output "project_id" {

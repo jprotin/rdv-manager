@@ -13,7 +13,7 @@ else
 fi
 
 exec firebase emulators:start \
-  --only firestore \
+  --only firestore,auth \
   --project "${FIREBASE_PROJECT_ID:-rdv-dev}" \
   --export-on-exit=/app/emulator-data \
   $IMPORT_FLAG
