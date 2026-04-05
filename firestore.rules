@@ -2,16 +2,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Clients — lecture/écriture uniquement authentifié
-    // Adapter selon votre stratégie d'auth (Firebase Auth, etc.)
-    // En mode développement sans auth, décommenter la règle permissive ci-dessous
     match /clients/{clientId} {
-      allow read, write: if true; // TODO: remplacer par request.auth != null
+      allow read, write: if request.auth != null;
     }
 
-    // Rendez-vous
     match /appointments/{appointmentId} {
-      allow read, write: if true; // TODO: remplacer par request.auth != null
+      allow read, write: if request.auth != null;
     }
   }
 }

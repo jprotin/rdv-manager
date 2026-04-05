@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext.jsx';
 
 const NAV_LINKS = [
   { to: '/', label: 'Tableau de bord', icon: '🏠', end: true },
@@ -10,6 +11,13 @@ const NAV_LINKS = [
 ];
 
 export default function BurgerMenu({ open, onClose }) {
+  const { logout } = useAuth();
+
+  async function handleLogout() {
+    onClose();
+    await logout();
+  }
+
   useEffect(() => {
     document.body.style.overflow = open ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
@@ -62,7 +70,10 @@ export default function BurgerMenu({ open, onClose }) {
         </nav>
 
         <div className="p-4 border-t border-ink-100">
-          <button className="flex items-center gap-3 w-full px-4 py-3 text-red-500 hover:bg-red-50 rounded-xl font-medium transition-colors">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 w-full px-4 py-3 text-red-500 hover:bg-red-50 rounded-xl font-medium transition-colors"
+          >
             <span className="text-lg">🚪</span>
             Déconnexion
           </button>

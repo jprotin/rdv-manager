@@ -25,9 +25,8 @@ data "terraform_remote_state" "projects_staging" {
 }
 
 module "app" {
-  source             = "../modules/app"
-  project_id         = data.terraform_remote_state.projects_staging.outputs.project_id
-  authorized_members = var.authorized_members
+  source     = "../modules/app"
+  project_id = data.terraform_remote_state.projects_staging.outputs.project_id
 }
 
 output "service_url"  { value = module.app.service_url }
