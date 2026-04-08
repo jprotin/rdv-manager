@@ -5,6 +5,7 @@ const NAV_LINKS = [
   { to: '/', label: 'Tableau de bord', icon: '🏠', end: true },
   { to: '/appointments', label: 'Liste des RDV', icon: '📅' },
   { to: '/clients', label: 'Liste des clients', icon: '👥' },
+  { to: '/tags', label: 'Tags', icon: '🏷️' },
   { to: '/stats', label: 'Statistiques', icon: '📊' },
   { to: '/settings', label: 'Paramétrage', icon: '⚙️' },
 ];

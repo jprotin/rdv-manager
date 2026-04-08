@@ -13,5 +13,9 @@ service cloud.firestore {
     match /appointments/{appointmentId} {
       allow read, write: if true; // TODO: remplacer par request.auth != null
     }
+
+    match /tags/{tagId} {
+      allow read, write: if true; // TODO: remplacer par request.auth != null
+    }
   }
 }

@@ -38,6 +38,9 @@ export default function ClientCard({ client, onUpdate }) {
             {client.phone && (
               <p className="text-sm text-gray-500 mt-0.5">{formatPhone(client.phone)}</p>
             )}
+            {client.email && (
+              <p className="text-sm text-gray-400 mt-0.5 truncate">{client.email}</p>
+            )}
             {client.address?.city && (
               <p className="text-xs text-gray-400 mt-0.5">
                 {client.address.city} {client.address.postcode && `(${client.address.postcode})`}

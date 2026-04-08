@@ -9,7 +9,6 @@ const DAYS   = ['L','M','M','J','V','S','D'];
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
-// Génère tous les créneaux de la journée (ex. ['08:00','08:30',...,'18:30'])
 function generateSlots() {
   const slots = [];
   for (let h = SLOT_START; h < SLOT_END; h++) {
@@ -20,22 +19,18 @@ function generateSlots() {
 }
 const ALL_SLOTS = generateSlots();
 
-// Construit un ISO UTC à partir de composants locaux
 function localToISO(year, month, day, timeStr) {
   const [h, m] = timeStr.split(':').map(Number);
   return new Date(year, month, day, h, m, 0, 0).toISOString();
 }
 
-// Nombre de jours dans le mois
 function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
 
-// Premier jour du mois — ramené à lundi=0 … dimanche=6
 function firstWeekday(y, m) {
   const d = new Date(y, m, 1).getDay();
   return d === 0 ? 6 : d - 1;
 }
 
-// Formatte un ISO pour affichage dans le bouton déclencheur
 export function formatPickerValue(iso) {
   if (!iso) return null;
   return new Date(iso).toLocaleString('fr-FR', {
@@ -44,7 +39,6 @@ export function formatPickerValue(iso) {
   });
 }
 
-// Formatte une date YYYY-MM-DD pour affichage
 export function formatDateOnly(dateStr) {
   if (!dateStr) return null;
   return new Date(dateStr + 'T00:00:00').toLocaleDateString('fr-FR', {
@@ -52,9 +46,33 @@ export function formatDateOnly(dateStr) {
   });
 }
 
-// ---- Composant ----
-// dateOnly=true : sélection de date uniquement, retourne "YYYY-MM-DD", ferme au clic
-export default function DateTimePicker({ value, onChange, onClose, label, dateOnly = false }) {
+// Ajoute N minutes à "HH:MM" → retourne { h: "HH", m: "MM" }
+function addMinutesToTime(hour, minute, mins) {
+  const total = parseInt(hour, 10) * 60 + parseInt(minute, 10) + mins;
+  return { h: pad(Math.floor((total % 1440) / 60)), m: pad(total % 60) };
+}
+
+// ---- Spinner compact ----
+function MiniSpinner({ value, onChange, step = 1, max = 59 }) {
+  const inc = () => onChange(pad((parseInt(value, 10) + step) % (max + 1)));
+  const dec = () => onChange(pad((parseInt(value, 10) - step + (max + 1)) % (max + 1)));
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <button type="button" onClick={inc}
+        className="w-8 h-7 rounded-lg bg-ink-50 hover:bg-primary-50 hover:text-primary-600 text-ink-500 font-bold text-sm flex items-center justify-center transition-colors"
+      >▲</button>
+      <span className="w-10 text-center text-lg font-bold text-ink-700 bg-snow border border-ink-200 rounded-lg py-0.5">
+        {value}
+      </span>
+      <button type="button" onClick={dec}
+        className="w-8 h-7 rounded-lg bg-ink-50 hover:bg-primary-50 hover:text-primary-600 text-ink-500 font-bold text-sm flex items-center justify-center transition-colors"
+      >▼</button>
+    </div>
+  );
+}
+
+// ---- Contenu interne du picker ----
+function PickerContent({ value, onChange, onClose, label, dateOnly = false, endValue, onEndChange, defaultDuration = 30 }) {
   const now     = new Date();
   const initial = value ? new Date(value) : now;
 
@@ -66,20 +84,34 @@ export default function DateTimePicker({ value, onChange, onClose, label, dateOn
     d: initial.getDate(),
   });
   const [selTime, setSelTime]   = useState(`${pad(initial.getHours())}:${pad(initial.getMinutes())}`);
-  const [customH, setCustomH]   = useState(pad(initial.getHours()));
-  const [customM, setCustomM]   = useState(pad(initial.getMinutes()));
+  const [startH, setStartH]    = useState(pad(initial.getHours()));
+  const [startMn, setStartMn]  = useState(pad(initial.getMinutes()));
   const [booked, setBooked]     = useState(new Set());
   const [loadingSlots, setLoadingSlots] = useState(false);
 
-  // Charger les RDV du jour sélectionné pour calculer les créneaux pris
+  const endInit = endValue ? new Date(endValue) : null;
+  const [endH, setEndH]   = useState(endInit ? pad(endInit.getHours()) : '00');
+  const [endMn, setEndMn] = useState(endInit ? pad(endInit.getMinutes()) : '00');
+  const [conflictMsg, setConflictMsg] = useState(null);
+  const [checking, setChecking]       = useState(false);
+
+  // Recalcule la fin quand le début change
+  const syncEnd = (h, m) => {
+    if (!onEndChange) return;
+    const e = addMinutesToTime(h, m, defaultDuration);
+    setEndH(e.h);
+    setEndMn(e.m);
+  };
+
+  // Charger les RDV du jour sélectionné
   useEffect(() => {
-    if (!selDate) return;
+    if (!selDate || dateOnly) return;
     setLoadingSlots(true);
     const from = new Date(selDate.y, selDate.m, selDate.d, 0, 0, 0).toISOString();
     const to   = new Date(selDate.y, selDate.m, selDate.d, 23, 59, 59).toISOString();
 
-    appointmentsService.getAll({ from, to, limit: 200 })
-      .then(({ data }) => {
+    appointmentsService.getInRange(from, to)
+      .then((data) => {
         const active = data.filter(a => a.status !== 'cancelled');
         const taken  = new Set();
         ALL_SLOTS.forEach(slot => {
@@ -96,9 +128,8 @@ export default function DateTimePicker({ value, onChange, onClose, label, dateOn
       })
       .catch(console.error)
       .finally(() => setLoadingSlots(false));
-  }, [selDate]);
+  }, [selDate, dateOnly]);
 
-  // Navigation mois
   const prevMonth = () => {
     if (viewM === 0) { setViewM(11); setViewY(y => y - 1); }
     else setViewM(m => m - 1);
@@ -113,7 +144,6 @@ export default function DateTimePicker({ value, onChange, onClose, label, dateOn
     const clicked = new Date(viewY, viewM, d);
     if (!dateOnly && clicked < today) return;
     if (dateOnly) {
-      // Retourne YYYY-MM-DD et ferme immédiatement
       const mm = pad(viewM + 1), dd = pad(d);
       onChange(`${viewY}-${mm}-${dd}`);
       onClose();
@@ -124,34 +154,57 @@ export default function DateTimePicker({ value, onChange, onClose, label, dateOn
 
   const handleSlot = (slot) => {
     if (booked.has(slot)) return;
+    const h = slot.split(':')[0];
+    const m = slot.split(':')[1];
     setSelTime(slot);
-    setCustomH(slot.split(':')[0]);
-    setCustomM(slot.split(':')[1]);
+    setStartH(h);
+    setStartMn(m);
+    syncEnd(h, m);
   };
 
-  const handleHourChange = (h) => {
-    setCustomH(h);
-    setSelTime(`${h}:${customM}`);
+  const handleStartHourChange = (h) => {
+    setStartH(h);
+    setSelTime(`${h}:${startMn}`);
+    syncEnd(h, startMn);
+  };
+  const handleStartMinuteChange = (m) => {
+    setStartMn(m);
+    setSelTime(`${startH}:${m}`);
+    syncEnd(startH, m);
   };
 
-  const handleMinuteChange = (m) => {
-    setCustomM(m);
-    setSelTime(`${customH}:${m}`);
-  };
-
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!selDate || !selTime) return;
-    onChange(localToISO(selDate.y, selDate.m, selDate.d, selTime));
+    const startISO = localToISO(selDate.y, selDate.m, selDate.d, selTime);
+    const endISO   = onEndChange
+      ? localToISO(selDate.y, selDate.m, selDate.d, `${endH}:${endMn}`)
+      : null;
+
+    // Vérification de conflit si on a début + fin
+    if (endISO) {
+      setConflictMsg(null);
+      setChecking(true);
+      try {
+        const hasConflict = await appointmentsService.checkConflict(startISO, endISO);
+        if (hasConflict) {
+          setConflictMsg('Ce créneau chevauche un rendez-vous existant.');
+          setChecking(false);
+          return;
+        }
+      } catch { /* erreur réseau : on laisse passer */ }
+      setChecking(false);
+    }
+
+    onChange(startISO);
+    if (onEndChange && endISO) onEndChange(endISO);
     onClose();
   };
 
-  // Calcul de la grille calendrier
   const totalDays  = daysInMonth(viewY, viewM);
   const startBlank = firstWeekday(viewY, viewM);
   const cells      = [...Array(startBlank).fill(null), ...Array.from({ length: totalDays }, (_, i) => i + 1)];
 
   const todayY = now.getFullYear(), todayM = now.getMonth(), todayD = now.getDate();
-  // En mode dateOnly, "sélectionné" = valeur actuelle du filtre
   const selectedDateOnly = dateOnly && value ? value : null;
   const isSelected = (d) => {
     if (dateOnly) {
@@ -164,68 +217,64 @@ export default function DateTimePicker({ value, onChange, onClose, label, dateOn
   const isPast  = (d) => !dateOnly && new Date(viewY, viewM, d) < new Date(todayY, todayM, todayD);
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+    <>
+      {label && (
+        <div className="px-5 pt-4 pb-1">
+          <p className="text-xs font-semibold text-ink-400 uppercase tracking-wide">{label}</p>
+        </div>
+      )}
 
-        {/* En-tête avec label */}
-        {label && (
-          <div className="px-5 pt-4 pb-1">
-            <p className="text-xs font-semibold text-ink-400 uppercase tracking-wide">{label}</p>
+      <div className="bg-primary-500 text-white px-4 py-3 flex items-center justify-between">
+        <button type="button" onClick={prevMonth} className="w-8 h-8 flex items-center justify-center hover:bg-primary-600 rounded-lg transition-colors text-lg font-bold">‹</button>
+        <span className="font-semibold text-sm">{MONTHS[viewM]} {viewY}</span>
+        <button type="button" onClick={nextMonth} className="w-8 h-8 flex items-center justify-center hover:bg-primary-600 rounded-lg transition-colors text-lg font-bold">›</button>
+      </div>
+
+      <div className="grid grid-cols-7 bg-primary-50 border-b border-primary-100">
+        {DAYS.map((d, i) => (
+          <div key={i} className="text-center text-xs font-semibold text-primary-400 py-2">{d}</div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7 p-2 gap-y-0.5">
+        {cells.map((day, i) => (
+          <div key={i} className="flex items-center justify-center h-9">
+            {day && (
+              <button
+                type="button"
+                onClick={() => handleDay(day)}
+                disabled={isPast(day)}
+                className={`w-8 h-8 rounded-full text-sm font-medium transition-colors
+                  ${isSelected(day)
+                    ? 'bg-primary-500 text-white shadow-sm'
+                    : isToday(day)
+                    ? 'border-2 border-primary-300 text-primary-600 font-bold'
+                    : isPast(day)
+                    ? 'text-ink-200 cursor-not-allowed'
+                    : 'text-ink-700 hover:bg-primary-50 hover:text-primary-600'
+                  }`}
+              >
+                {day}
+              </button>
+            )}
           </div>
-        )}
+        ))}
+      </div>
 
-        {/* Navigation mois — couleur primaire */}
-        <div className="bg-primary-500 text-white px-4 py-3 flex items-center justify-between">
-          <button onClick={prevMonth} className="w-8 h-8 flex items-center justify-center hover:bg-primary-600 rounded-lg transition-colors text-lg font-bold">‹</button>
-          <span className="font-semibold text-sm">{MONTHS[viewM]} {viewY}</span>
-          <button onClick={nextMonth} className="w-8 h-8 flex items-center justify-center hover:bg-primary-600 rounded-lg transition-colors text-lg font-bold">›</button>
-        </div>
-
-        {/* Entêtes jours */}
-        <div className="grid grid-cols-7 bg-primary-50 border-b border-primary-100">
-          {DAYS.map((d, i) => (
-            <div key={i} className="text-center text-xs font-semibold text-primary-400 py-2">{d}</div>
-          ))}
-        </div>
-
-        {/* Grille calendrier */}
-        <div className="grid grid-cols-7 p-2 gap-y-0.5">
-          {cells.map((day, i) => (
-            <div key={i} className="flex items-center justify-center h-9">
-              {day && (
-                <button
-                  onClick={() => handleDay(day)}
-                  disabled={isPast(day)}
-                  className={`w-8 h-8 rounded-full text-sm font-medium transition-colors
-                    ${isSelected(day)
-                      ? 'bg-primary-500 text-white shadow-sm'
-                      : isToday(day)
-                      ? 'border-2 border-primary-300 text-primary-600 font-bold'
-                      : isPast(day)
-                      ? 'text-ink-200 cursor-not-allowed'
-                      : 'text-ink-700 hover:bg-primary-50 hover:text-primary-600'
-                    }`}
-                >
-                  {day}
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Créneaux horaires — masqués en mode dateOnly */}
-        {!dateOnly && <div className="border-t border-ink-100 px-4 py-3">
+      {!dateOnly && <div className="border-t border-ink-100 px-4 py-3 space-y-3">
+        {/* Créneaux rapides */}
+        <div>
           <p className="text-xs font-semibold text-ink-400 uppercase tracking-wide mb-2">
             {loadingSlots ? 'Chargement...' : 'Créneaux disponibles'}
           </p>
-
           {!loadingSlots && (
-            <div className="grid grid-cols-4 gap-1.5 max-h-40 overflow-y-auto pr-0.5">
+            <div className="grid grid-cols-4 gap-1.5 max-h-32 overflow-y-auto pr-0.5">
               {ALL_SLOTS.map(slot => {
                 const isTaken  = booked.has(slot);
                 const isActive = selTime === slot;
                 return (
                   <button
+                    type="button"
                     key={slot}
                     onClick={() => handleSlot(slot)}
                     disabled={isTaken}
@@ -244,72 +293,88 @@ export default function DateTimePicker({ value, onChange, onClose, label, dateOn
               })}
             </div>
           )}
+        </div>
 
-          {/* Contrôle heure / minutes */}
-          <div className="mt-3 pt-2 border-t border-ink-100">
-            <p className="text-xs font-semibold text-ink-400 uppercase tracking-wide mb-2">
-              Heure personnalisée
-            </p>
-            <div className="flex items-center justify-center gap-3">
-              {/* Heures */}
-              <div className="flex flex-col items-center gap-1">
-                <button
-                  onClick={() => handleHourChange(pad((parseInt(customH, 10) + 1) % 24))}
-                  className="w-9 h-9 rounded-xl bg-ink-50 hover:bg-primary-50 hover:text-primary-600 text-ink-500 font-bold text-lg flex items-center justify-center transition-colors"
-                >▲</button>
-                <span className="w-12 text-center text-xl font-bold text-ink-700 bg-snow border border-ink-200 rounded-xl py-1">
-                  {customH}
-                </span>
-                <button
-                  onClick={() => handleHourChange(pad((parseInt(customH, 10) - 1 + 24) % 24))}
-                  className="w-9 h-9 rounded-xl bg-ink-50 hover:bg-primary-50 hover:text-primary-600 text-ink-500 font-bold text-lg flex items-center justify-center transition-colors"
-                >▼</button>
-                <span className="text-xs text-ink-400">Heure</span>
-              </div>
-              <span className="text-2xl font-bold text-ink-300 mb-5">:</span>
-              {/* Minutes */}
-              <div className="flex flex-col items-center gap-1">
-                <button
-                  onClick={() => handleMinuteChange(pad((parseInt(customM, 10) + 5) % 60))}
-                  className="w-9 h-9 rounded-xl bg-ink-50 hover:bg-primary-50 hover:text-primary-600 text-ink-500 font-bold text-lg flex items-center justify-center transition-colors"
-                >▲</button>
-                <span className="w-12 text-center text-xl font-bold text-ink-700 bg-snow border border-ink-200 rounded-xl py-1">
-                  {customM}
-                </span>
-                <button
-                  onClick={() => handleMinuteChange(pad((parseInt(customM, 10) - 5 + 60) % 60))}
-                  className="w-9 h-9 rounded-xl bg-ink-50 hover:bg-primary-50 hover:text-primary-600 text-ink-500 font-bold text-lg flex items-center justify-center transition-colors"
-                >▼</button>
-                <span className="text-xs text-ink-400">Minutes</span>
+        {/* Spinners début / fin côte à côte */}
+        <div className="pt-2 border-t border-ink-100">
+          <div className={`grid gap-4 ${onEndChange ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {/* Début */}
+            <div>
+              <p className="text-xs font-semibold text-ink-400 uppercase tracking-wide mb-2 text-center">Début</p>
+              <div className="flex items-center justify-center gap-1">
+                <MiniSpinner value={startH} onChange={handleStartHourChange} step={1} max={23} />
+                <span className="text-xl font-bold text-ink-300 mb-1">:</span>
+                <MiniSpinner value={startMn} onChange={handleStartMinuteChange} step={5} max={59} />
               </div>
             </div>
-          </div>
-        </div>}
 
-        {/* Actions — masquées en mode dateOnly (fermeture auto au clic) */}
-        {!dateOnly && (
-          <div className="flex gap-2 px-4 pb-5 pt-1">
-            <button onClick={onClose} className="btn-secondary flex-1 !py-2 text-sm">
-              Annuler
-            </button>
-            <button
-              onClick={handleConfirm}
-              disabled={!selDate || !selTime}
-              className="btn-primary flex-1 !py-2 text-sm"
-            >
-              Confirmer
-            </button>
+            {/* Fin */}
+            {onEndChange && (
+              <div>
+                <p className="text-xs font-semibold text-ink-400 uppercase tracking-wide mb-2 text-center">Fin</p>
+                <div className="flex items-center justify-center gap-1">
+                  <MiniSpinner value={endH} onChange={setEndH} step={1} max={23} />
+                  <span className="text-xl font-bold text-ink-300 mb-1">:</span>
+                  <MiniSpinner value={endMn} onChange={setEndMn} step={5} max={59} />
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        </div>
+      </div>}
 
-        {/* En mode dateOnly, juste un bouton Annuler */}
-        {dateOnly && (
-          <div className="px-4 pb-5 pt-1">
-            <button onClick={onClose} className="btn-secondary w-full !py-2 text-sm">
-              Annuler
-            </button>
-          </div>
-        )}
+      {/* Message de conflit */}
+      {conflictMsg && (
+        <div className="mx-4 mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl">
+          <p className="text-red-600 text-xs font-medium">{conflictMsg}</p>
+        </div>
+      )}
+
+      {/* Actions */}
+      {!dateOnly && (
+        <div className="flex gap-2 px-4 pb-5 pt-2">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1 !py-2 text-sm">
+            Annuler
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={!selDate || !selTime || checking}
+            className="btn-primary flex-1 !py-2 text-sm"
+          >
+            {checking ? 'Vérification...' : 'Confirmer'}
+          </button>
+        </div>
+      )}
+
+      {dateOnly && (
+        <div className="px-4 pb-5 pt-1">
+          <button type="button" onClick={onClose} className="btn-secondary w-full !py-2 text-sm">
+            Annuler
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---- Composant principal ----
+// endValue / onEndChange : active le spinner heure de fin
+// defaultDuration : durée par défaut en minutes (pour auto-calcul fin quand début change)
+export default function DateTimePicker({ value, onChange, onClose, label, dateOnly = false, endValue, onEndChange, defaultDuration = 30 }) {
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4" onClick={onClose}>
+      <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl overflow-hidden max-h-[95vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <PickerContent
+          value={value}
+          onChange={onChange}
+          onClose={onClose}
+          label={label}
+          dateOnly={dateOnly}
+          endValue={endValue}
+          onEndChange={onEndChange}
+          defaultDuration={defaultDuration}
+        />
       </div>
     </div>
   );

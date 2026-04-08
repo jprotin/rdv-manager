@@ -80,14 +80,14 @@ export default function Statistics() {
           <h2 className="font-semibold text-gray-700 mb-3">Répartition par statut</h2>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { key: 'pending', label: 'En attente', color: 'text-amber-600' },
-              { key: 'confirmed', label: 'Confirmés', color: 'text-green-600' },
-              { key: 'completed', label: 'Réalisés', color: 'text-gray-600' },
-              { key: 'cancelled', label: 'Annulés', color: 'text-red-500' },
+              { key: 'confirmed',   label: 'Confirmés',  color: 'text-green-600' },
+              { key: 'in_progress', label: 'En cours',   color: 'text-blue-600' },
+              { key: 'completed',   label: 'Terminés',   color: 'text-gray-600' },
+              { key: 'cancelled',   label: 'Annulés',    color: 'text-red-500' },
             ].map(({ key, label, color }) => (
               <div key={key} className="flex items-center justify-between py-1">
                 <span className="text-sm text-gray-600">{label}</span>
-                <span className={`font-semibold ${color}`}>{overview.statusBreakdown[key]}</span>
+                <span className={`font-semibold ${color}`}>{overview.statusBreakdown[key] ?? 0}</span>
               </div>
             ))}
           </div>
@@ -110,9 +110,11 @@ export default function Statistics() {
                 <span className="text-primary-600 font-medium w-24 shrink-0">
                   {new Date(apt.startAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
                 </span>
-                <span className="flex-1 text-gray-700 font-medium truncate">{apt.title}</span>
-                {apt.client && (
-                  <span className="text-gray-400 shrink-0">{apt.client.firstName} {apt.client.lastName}</span>
+                <span className="flex-1 text-gray-700 font-medium truncate">
+                  {apt.client ? `${apt.client.firstName} ${apt.client.lastName}` : apt.description || '—'}
+                </span>
+                {apt.description && apt.client && (
+                  <span className="text-gray-400 shrink-0 truncate max-w-[100px]">{apt.description}</span>
                 )}
               </li>
             ))}
