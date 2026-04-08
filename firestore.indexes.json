@@ -35,13 +35,6 @@
       ]
     },
     {
-      "collectionGroup": "tags",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "name", "order": "ASCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "clients",
       "queryScope": "COLLECTION",
       "fields": [
