@@ -1,1 +1,1 @@
-variable "authorized_members" { type = list(string) }
+# Aucune variable requise pour ce layer

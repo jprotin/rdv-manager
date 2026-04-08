@@ -1,3 +1,1 @@
-authorized_members = [
-  "user:johan.protin@nantares.com",
-]
+# Aucune variable requise — accès public géré par Firebase Auth

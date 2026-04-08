@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, connectFirestoreEmulator } from 'firebase/firestore';
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -18,7 +19,10 @@ export const db = initializeFirestore(app, {
   }),
 });
 
-// En développement, pointer vers l'émulateur local
+export const auth = getAuth(app);
+
+// En développement, pointer vers les émulateurs locaux
 if (import.meta.env.DEV) {
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
 }
