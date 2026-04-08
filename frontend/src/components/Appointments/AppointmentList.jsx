@@ -3,14 +3,14 @@ import AppointmentCard from './AppointmentCard.jsx';
 import CreateAppointmentModal from './CreateAppointmentModal.jsx';
 import DateTimePicker, { formatDateOnly } from '../common/DateTimePicker.jsx';
 import SelectPicker from '../common/SelectPicker.jsx';
-import { appointmentsService } from '../../services/firestore.js';
+import { appointmentsService, tagsService } from '../../services/firestore.js';
 
 const STATUS_OPTIONS = [
-  { value: '',          label: 'Tous les statuts' },
-  { value: 'pending',   label: 'En attente' },
-  { value: 'confirmed', label: 'Confirmé' },
-  { value: 'completed', label: 'Réalisé' },
-  { value: 'cancelled', label: 'Annulé' },
+  { value: '',            label: 'Tous les statuts' },
+  { value: 'confirmed',   label: 'Confirmé' },
+  { value: 'in_progress', label: 'En cours' },
+  { value: 'completed',   label: 'Terminé' },
+  { value: 'cancelled',   label: 'Annulé' },
 ];
 
 const PAGE_SIZE = 20;
@@ -21,15 +21,22 @@ export default function AppointmentList() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [filters, setFilters] = useState({ status: '', from: '', to: '' });
+  const [filters, setFilters] = useState({ status: '', tag: '', from: '', to: '' });
   const [datePicker, setDatePicker]     = useState(null);  // 'from' | 'to' | null
   const [statusPicker, setStatusPicker] = useState(false);
+  const [tagPicker, setTagPicker]       = useState(false);
+  const [allTags, setAllTags]           = useState([]);
+
+  useEffect(() => {
+    tagsService.getAll().then(setAllTags).catch(() => {});
+  }, []);
 
   const fetchAppointments = useCallback(async () => {
     setLoading(true);
     try {
       const params = { page, limit: PAGE_SIZE };
       if (filters.status) params.status = filters.status;
+      if (filters.tag)    params.tag    = filters.tag;
       if (filters.from) params.from = new Date(filters.from).toISOString();
       if (filters.to) {
         const end = new Date(filters.to);
@@ -49,11 +56,16 @@ export default function AppointmentList() {
   useEffect(() => { fetchAppointments(); }, [fetchAppointments]);
 
   const resetFilters = () => {
-    setFilters({ status: '', from: '', to: '' });
+    setFilters({ status: '', tag: '', from: '', to: '' });
     setPage(1);
   };
 
-  const hasFilters = filters.status || filters.from || filters.to;
+  const TAG_OPTIONS = [
+    { value: '', label: 'Tous les tags' },
+    ...allTags.map(t => ({ value: t.name, label: t.name })),
+  ];
+
+  const hasFilters = filters.status || filters.tag || filters.from || filters.to;
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
@@ -83,6 +95,18 @@ export default function AppointmentList() {
         >
           {STATUS_OPTIONS.find(o => o.value === filters.status)?.label ?? 'Tous les statuts'}
         </button>
+        {allTags.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setTagPicker(true)}
+            className={`border rounded-lg px-3 py-1.5 text-sm bg-white transition-colors
+              ${filters.tag
+                ? 'border-primary-300 text-primary-600 font-medium'
+                : 'border-ink-200 text-ink-400 hover:border-primary-300'}`}
+          >
+            {filters.tag ? `#${filters.tag}` : 'Tous les tags'}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setDatePicker('from')}
@@ -156,6 +180,16 @@ export default function AppointmentList() {
           options={STATUS_OPTIONS}
           onChange={(v) => { setFilters(f => ({ ...f, status: v })); setPage(1); }}
           onClose={() => setStatusPicker(false)}
+        />
+      )}
+
+      {tagPicker && (
+        <SelectPicker
+          label="Filtrer par tag"
+          value={filters.tag}
+          options={TAG_OPTIONS}
+          onChange={(v) => { setFilters(f => ({ ...f, tag: v })); setPage(1); }}
+          onClose={() => setTagPicker(false)}
         />
       )}
 

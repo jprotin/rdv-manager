@@ -1,6 +1,6 @@
 import { db } from '../config/firebase.js';
 import {
-  collection, doc, addDoc, updateDoc, getDoc, getDocs,
+  collection, doc, addDoc, updateDoc, deleteDoc, getDocs,
   query, where, orderBy, limit,
   Timestamp, serverTimestamp, getCountFromServer,
 } from 'firebase/firestore';
@@ -12,9 +12,6 @@ const toTS = (date) => {
   if (date instanceof Timestamp) return date;
   return Timestamp.fromDate(new Date(date));
 };
-
-const fromDoc = (snap) =>
-  snap.exists() ? { _id: snap.id, ...snap.data() } : null;
 
 const fromDocs = (snap) =>
   snap.docs.map((d) => ({ _id: d.id, ...d.data() }));
@@ -46,8 +43,11 @@ export const clientsService = {
 
   async create(data) {
     const ref = await addDoc(col('clients'), {
-      ...data,
-      phone: data.phone?.replace(/\s/g, '') || '',
+      firstName: data.firstName,
+      lastName:  data.lastName,
+      phone:     data.phone?.replace(/\s/g, '') || '',
+      email:     data.email?.trim() || '',
+      address:   data.address || null,
       deletedAt: null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -92,9 +92,10 @@ export const appointmentsService = {
     return fromDocs(await getDocs(q)).map(normalizeAppointment);
   },
 
-  async getAll({ status, from, to, page = 1, limit: lim = 20 } = {}) {
+  async getAll({ status, tag, from, to, page = 1, limit: lim = 20 } = {}) {
     const constraints = [where('deletedAt', '==', null), orderBy('startAt', 'desc')];
     if (status) constraints.push(where('status', '==', status));
+    if (tag)    constraints.push(where('tags', 'array-contains', tag));
     if (from)   constraints.push(where('startAt', '>=', toTS(new Date(from))));
     if (to)     constraints.push(where('startAt', '<=', toTS(new Date(to))));
     const snap = await getDocs(query(col('appointments'), ...constraints));
@@ -102,27 +103,41 @@ export const appointmentsService = {
     return { data: all.slice((page - 1) * lim, page * lim), total: all.length };
   },
 
+  async getInRange(from, to) {
+    const q = query(
+      col('appointments'),
+      where('deletedAt', '==', null),
+      where('startAt', '>=', toTS(new Date(from))),
+      where('startAt', '<=', toTS(new Date(to))),
+      orderBy('startAt')
+    );
+    return fromDocs(await getDocs(q)).map(normalizeAppointment);
+  },
+
+  async checkConflict(startAt, endAt, excludeId = null) {
+    const dayStart = new Date(startAt); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd   = new Date(startAt); dayEnd.setHours(23, 59, 59, 999);
+    const apts = await this.getInRange(dayStart.toISOString(), dayEnd.toISOString());
+    const startMs = new Date(startAt).getTime();
+    const endMs   = new Date(endAt).getTime();
+    return apts
+      .filter(a => a.status !== 'cancelled' && a._id !== excludeId)
+      .some(a => new Date(a.startAt).getTime() < endMs && new Date(a.endAt).getTime() > startMs);
+  },
+
   async create({ clientId, clientSnapshot, ...rest }) {
-    // Récupère le snapshot client si non fourni
-    let snap = clientSnapshot || null;
-    if (!snap && clientId) {
-      const clientDoc = await getDoc(doc(db, 'clients', clientId));
-      if (clientDoc.exists()) {
-        const c = clientDoc.data();
-        snap = { firstName: c.firstName, lastName: c.lastName, phone: c.phone, address: c.address };
-      }
-    }
     const ref = await addDoc(col('appointments'), {
       ...rest,
-      clientId:        clientId || null,
-      client:          snap,
-      startAt:         toTS(rest.startAt),
-      endAt:           toTS(rest.endAt),
-      deletedAt:       null,
-      createdAt:       serverTimestamp(),
-      updatedAt:       serverTimestamp(),
+      clientId:  clientId || null,
+      client:    clientSnapshot || null,
+      tags:      rest.tags || [],
+      startAt:   toTS(rest.startAt),
+      endAt:     toTS(rest.endAt),
+      deletedAt: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
-    return { _id: ref.id, ...rest, client: snap };
+    return { _id: ref.id, ...rest, client: clientSnapshot || null };
   },
 
   async updateStatus(id, status) {
@@ -134,6 +149,24 @@ export const appointmentsService = {
       deletedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+  },
+};
+
+// ---- Tags ----
+
+export const tagsService = {
+  async getAll() {
+    return fromDocs(await getDocs(query(col('tags'), orderBy('name'))));
+  },
+
+  async create(name) {
+    const normalized = name.trim().toLowerCase();
+    const ref = await addDoc(col('tags'), { name: normalized, createdAt: serverTimestamp() });
+    return { _id: ref.id, name: normalized };
+  },
+
+  async delete(id) {
+    await deleteDoc(doc(db, 'tags', id));
   },
 };
 
@@ -157,8 +190,13 @@ export const statsService = {
       getDocs(query(col('appointments'), ...base)),
     ]);
 
-    const breakdown = { pending: 0, confirmed: 0, cancelled: 0, completed: 0 };
-    allApts.docs.forEach((d) => { const s = d.data().status; if (s in breakdown) breakdown[s]++; });
+    const breakdown = { confirmed: 0, in_progress: 0, completed: 0, cancelled: 0 };
+    allApts.docs.forEach((d) => {
+      const s = d.data().status;
+      // legacy pending → confirmed
+      const key = s === 'pending' ? 'confirmed' : s;
+      if (key in breakdown) breakdown[key]++;
+    });
 
     return {
       totalClients:      totalClients.data().count,
@@ -187,7 +225,7 @@ export const statsService = {
       col('appointments'),
       where('deletedAt', '==', null),
       where('startAt', '>=', Timestamp.now()),
-      where('status', 'in', ['pending', 'confirmed']),
+      where('status', 'in', ['confirmed', 'in_progress']),
       orderBy('startAt'),
       limit(5),
     ));
