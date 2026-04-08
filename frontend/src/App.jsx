@@ -6,6 +6,7 @@ import AppointmentList from './components/Appointments/AppointmentList.jsx';
 import ClientList from './components/Clients/ClientList.jsx';
 import Statistics from './components/Stats/Statistics.jsx';
 import Settings from './components/Settings/Settings.jsx';
+import TagsPage from './components/Tags/TagsPage.jsx';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
             <Route path="clients" element={<ClientList />} />
             <Route path="stats" element={<Statistics />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="tags" element={<TagsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

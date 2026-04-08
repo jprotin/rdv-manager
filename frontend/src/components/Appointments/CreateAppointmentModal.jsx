@@ -1,50 +1,57 @@
 import { useState, useEffect } from 'react';
 import AddressSearch from '../common/AddressSearch.jsx';
 import PhoneInput from '../common/PhoneInput.jsx';
+import TagInput from '../common/TagInput.jsx';
 import DateTimePicker, { formatPickerValue } from '../common/DateTimePicker.jsx';
 import SelectPicker from '../common/SelectPicker.jsx';
-import { appointmentsService, clientsService } from '../../services/firestore.js';
-
-const STATUS_OPTIONS = [
-  { value: 'pending',   label: 'En attente' },
-  { value: 'confirmed', label: 'Confirmé' },
-  { value: 'completed', label: 'Réalisé' },
-  { value: 'cancelled', label: 'Annulé' },
-];
+import { appointmentsService, clientsService, tagsService } from '../../services/firestore.js';
 import { useApp } from '../../context/AppContext.jsx';
 
-function nowISO() {
-  return new Date().toISOString();
+const STATUS_OPTIONS = [
+  { value: 'confirmed',   label: 'Confirmé' },
+  { value: 'in_progress', label: 'En cours' },
+  { value: 'completed',   label: 'Terminé' },
+  { value: 'cancelled',   label: 'Annulé' },
+];
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function getSettings() {
+  try { return JSON.parse(localStorage.getItem('rdv_settings') || '{}'); } catch { return {}; }
 }
-function plusOneHour(iso) {
-  const d = new Date(iso);
-  d.setHours(d.getHours() + 1);
-  return d.toISOString();
+
+function computeEndAt(startISO, durationMin) {
+  return new Date(new Date(startISO).getTime() + durationMin * 60000).toISOString();
 }
 
 export default function CreateAppointmentModal({ onClose, onSaved, initialDate }) {
   const { notify } = useApp();
+  const settings = getSettings();
+  const defaultDuration = parseInt(settings.defaultDuration || '30', 10);
+
   const [saving, setSaving]               = useState(false);
   const [errors, setErrors]               = useState({});
   const [clientSearch, setClientSearch]   = useState('');
   const [clientResults, setClientResults] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
-  const [picker, setPicker]               = useState(null); // 'start' | 'end' | null
+  const [picker, setPicker]               = useState(null); // null | 'datetime'
   const [statusPicker, setStatusPicker]   = useState(false);
 
-  const startDefault = initialDate ? new Date(initialDate).toISOString() : nowISO();
+  const startDefault = initialDate
+    ? new Date(initialDate).toISOString()
+    : new Date().toISOString();
 
   const [form, setForm] = useState({
     firstName:   '',
     lastName:    '',
     phone:       '',
+    email:       '',
     address:     null,
-    title:       '',
     description: '',
-    notes:       '',
     startAt:     startDefault,
-    endAt:       plusOneHour(startDefault),
-    status:      'pending',
+    endAt:       computeEndAt(startDefault, defaultDuration),
+    status:      'confirmed',
+    tags:        [],
   });
 
   useEffect(() => {
@@ -58,24 +65,28 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
     return () => clearTimeout(t);
   }, [clientSearch]);
 
-  const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
+  const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
   const handleStartChange = (iso) => {
-    setForm(f => ({
-      ...f,
-      startAt: iso,
-      // décale la fin pour maintenir +1h, sauf si fin a été personnalisée après le début
-      endAt: new Date(f.endAt) <= new Date(iso) ? plusOneHour(iso) : f.endAt,
-    }));
+    setForm(f => {
+      // Recalcule la fin uniquement si elle n'a pas été ajustée manuellement
+      const currentDiff = Math.round((new Date(f.endAt) - new Date(f.startAt)) / 60000);
+      const duration = currentDiff > 0 ? currentDiff : defaultDuration;
+      return { ...f, startAt: iso, endAt: computeEndAt(iso, duration) };
+    });
+  };
+
+  const handleEndChange = (iso) => {
+    set('endAt', iso);
   };
 
   const validate = () => {
     const errs = {};
     if (!form.firstName.trim()) errs.firstName = 'Prénom requis';
     if (!form.lastName.trim())  errs.lastName  = 'Nom requis';
-    if (!form.title.trim())     errs.title     = 'Intitulé requis';
-    if (!form.startAt)          errs.startAt   = 'Date de début requise';
-    if (!form.endAt)            errs.endAt     = 'Date de fin requise';
+    if (!form.phone.trim())     errs.phone     = 'Téléphone requis';
+    if (form.email && !EMAIL_RE.test(form.email)) errs.email = 'Email invalide';
+    if (!form.startAt)          errs.startAt   = 'Date requise';
     if (form.startAt && form.endAt && new Date(form.endAt) <= new Date(form.startAt)) {
       errs.endAt = 'La fin doit être après le début';
     }
@@ -89,6 +100,7 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
       firstName: client.firstName,
       lastName:  client.lastName,
       phone:     client.phone || '',
+      email:     client.email || '',
       address:   client.address || null,
     }));
     setClientResults([]);
@@ -100,28 +112,68 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
     const errs = validate();
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
 
+    // Détection de conflit
+    try {
+      const hasConflict = await appointmentsService.checkConflict(form.startAt, form.endAt);
+      if (hasConflict) {
+        setErrors({ submit: 'Conflit : un rendez-vous existe déjà sur ce créneau.' });
+        return;
+      }
+    } catch { /* si erreur réseau, on continue */ }
+
     setSaving(true);
     try {
       let clientId = selectedClient?._id || null;
+      let clientSnapshot = null;
+
       if (!clientId) {
         const newClient = await clientsService.create({
           firstName: form.firstName.trim(),
           lastName:  form.lastName.trim(),
           phone:     form.phone.replace(/\s/g, ''),
+          email:     form.email.trim(),
           address:   form.address,
         });
         clientId = newClient._id;
+        clientSnapshot = {
+          firstName: form.firstName.trim(),
+          lastName:  form.lastName.trim(),
+          phone:     form.phone.replace(/\s/g, ''),
+          email:     form.email.trim(),
+          address:   form.address,
+        };
+      } else {
+        clientSnapshot = {
+          firstName: selectedClient.firstName,
+          lastName:  selectedClient.lastName,
+          phone:     selectedClient.phone,
+          email:     selectedClient.email || '',
+          address:   selectedClient.address,
+        };
       }
+
       await appointmentsService.create({
         clientId,
-        title:       form.title.trim(),
+        clientSnapshot,
         description: form.description.trim(),
-        notes:       form.notes.trim(),
         startAt:     form.startAt,
         endAt:       form.endAt,
         status:      form.status,
         address:     form.address,
+        tags:        form.tags,
       });
+
+      // Persister les tags qui n'existent pas encore dans la collection tags
+      if (form.tags.length > 0) {
+        const existingTags = await tagsService.getAll();
+        const existingNames = new Set(existingTags.map(t => t.name));
+        await Promise.all(
+          form.tags
+            .filter(t => !existingNames.has(t))
+            .map(t => tagsService.create(t))
+        );
+      }
+
       notify('success', 'Rendez-vous enregistré');
       onSaved();
     } catch (err) {
@@ -132,68 +184,46 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
     }
   };
 
+  const formatEndTime = (iso) =>
+    new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+  const durationMin = Math.round((new Date(form.endAt) - new Date(form.startAt)) / 60000);
+
   return (
     <>
-      {/* Overlay — backdrop visible uniquement md+ ; plein écran sur petits écrans */}
+      {/* Overlay principal */}
       <div className="fixed inset-0 bg-black/50 z-50 md:flex md:items-center md:justify-center md:p-6" onClick={onClose}>
         <div
           className="bg-white w-full h-full overflow-y-auto
                      md:h-auto md:max-h-[90vh] md:w-[560px] md:rounded-2xl md:shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
-
           <div className="sticky top-0 bg-white px-5 py-4 border-b border-ink-100 flex items-center justify-between z-10 md:rounded-t-2xl">
             <h2 className="text-lg font-semibold text-ink-700">Nouveau rendez-vous</h2>
-            <button onClick={onClose} className="text-ink-300 hover:text-ink-600 text-2xl leading-none">×</button>
+            <button type="button" onClick={onClose} className="text-ink-300 hover:text-ink-600 text-2xl leading-none">×</button>
           </div>
 
           <form onSubmit={handleSubmit} className="p-5 space-y-4">
 
-            {/* Intitulé */}
+            {/* Date & Heure — bouton ouvrant la popup */}
             <div>
-              <label className="block text-sm font-medium text-ink-700 mb-1">Intitulé *</label>
-              <input
-                type="text"
-                className="input"
-                value={form.title}
-                onChange={(e) => set('title', e.target.value)}
-                placeholder="Ex: Consultation, Livraison..."
-              />
-              {errors.title && <p className="text-red-500 text-xs mt-1">{errors.title}</p>}
-            </div>
-
-            {/* Dates — boutons ouvrant le picker */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-ink-700 mb-1">Début *</label>
-                <button
-                  type="button"
-                  onClick={() => setPicker('start')}
-                  className="w-full px-3 py-2.5 border border-ink-200 rounded-xl text-sm text-left
-                             hover:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300
-                             transition-colors bg-white"
-                >
-                  <span className={form.startAt ? 'text-ink-700' : 'text-ink-300'}>
-                    {formatPickerValue(form.startAt) ?? 'Choisir…'}
-                  </span>
-                </button>
-                {errors.startAt && <p className="text-red-500 text-xs mt-1">{errors.startAt}</p>}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-ink-700 mb-1">Fin *</label>
-                <button
-                  type="button"
-                  onClick={() => setPicker('end')}
-                  className="w-full px-3 py-2.5 border border-ink-200 rounded-xl text-sm text-left
-                             hover:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300
-                             transition-colors bg-white"
-                >
-                  <span className={form.endAt ? 'text-ink-700' : 'text-ink-300'}>
-                    {formatPickerValue(form.endAt) ?? 'Choisir…'}
-                  </span>
-                </button>
-                {errors.endAt && <p className="text-red-500 text-xs mt-1">{errors.endAt}</p>}
-              </div>
+              <label className="block text-sm font-medium text-ink-700 mb-1">Date et heure *</label>
+              <button
+                type="button"
+                onClick={() => setPicker('datetime')}
+                className="w-full px-3 py-2.5 border border-ink-200 rounded-xl text-sm text-left
+                           hover:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300
+                           transition-colors bg-white"
+              >
+                <span className="text-ink-700">
+                  {formatPickerValue(form.startAt)}
+                  <span className="text-ink-400 mx-1">→</span>
+                  {formatEndTime(form.endAt)}
+                  <span className="text-ink-300 ml-2 text-xs">{durationMin > 0 ? `${durationMin} min` : ''}</span>
+                </span>
+              </button>
+              {errors.startAt && <p className="text-red-500 text-xs mt-1">{errors.startAt}</p>}
+              {errors.endAt && <p className="text-red-500 text-xs mt-1">{errors.endAt}</p>}
             </div>
 
             {/* Client */}
@@ -234,7 +264,10 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
                   </div>
                   <button
                     type="button"
-                    onClick={() => { setSelectedClient(null); setForm(f => ({ ...f, firstName: '', lastName: '', phone: '', address: null })); }}
+                    onClick={() => {
+                      setSelectedClient(null);
+                      setForm(f => ({ ...f, firstName: '', lastName: '', phone: '', email: '', address: null }));
+                    }}
                     className="text-xs text-primary-500 hover:text-primary-700"
                   >
                     Changer
@@ -255,9 +288,23 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
                 </div>
               </div>
 
-              <div className="mt-3">
-                <label className="block text-sm font-medium text-ink-700 mb-1">Téléphone</label>
-                <PhoneInput value={form.phone} onChange={(v) => set('phone', v)} />
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-ink-700 mb-1">Téléphone *</label>
+                  <PhoneInput value={form.phone} onChange={(v) => set('phone', v)} />
+                  {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-ink-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    className="input"
+                    value={form.email}
+                    onChange={(e) => set('email', e.target.value)}
+                    placeholder="jean@example.com"
+                  />
+                  {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
+                </div>
               </div>
 
               <div className="mt-3">
@@ -266,30 +313,34 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
               </div>
             </div>
 
+            {/* Tags */}
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1">Tags</label>
+              <TagInput value={form.tags} onChange={(v) => set('tags', v)} />
+            </div>
+
+            {/* Description */}
+            <div>
+              <label className="block text-sm font-medium text-ink-700 mb-1">Description</label>
+              <textarea
+                className="input resize-none"
+                rows={2}
+                value={form.description}
+                onChange={(e) => set('description', e.target.value)}
+                placeholder="Détails du rendez-vous..."
+              />
+            </div>
+
             {/* Statut */}
             <div>
               <label className="block text-sm font-medium text-ink-700 mb-1">Statut</label>
               <button
                 type="button"
                 onClick={() => setStatusPicker(true)}
-                className="w-full px-3 py-2.5 border border-ink-200 rounded-xl text-sm text-left
-                           hover:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300
-                           transition-colors bg-white text-ink-700"
+                className="w-full px-3 py-2.5 border border-ink-200 rounded-xl text-sm text-left hover:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300 transition-colors bg-white text-ink-700"
               >
                 {STATUS_OPTIONS.find(o => o.value === form.status)?.label ?? 'Choisir…'}
               </button>
-            </div>
-
-            {/* Description */}
-            <div>
-              <label className="block text-sm font-medium text-ink-700 mb-1">Description</label>
-              <textarea className="input resize-none" rows={2} value={form.description} onChange={(e) => set('description', e.target.value)} placeholder="Détails du rendez-vous..." />
-            </div>
-
-            {/* Notes */}
-            <div>
-              <label className="block text-sm font-medium text-ink-700 mb-1">Notes</label>
-              <textarea className="input resize-none" rows={2} value={form.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Remarques internes..." />
             </div>
 
             {errors.submit && <p className="text-red-500 text-sm">{errors.submit}</p>}
@@ -315,23 +366,16 @@ export default function CreateAppointmentModal({ onClose, onSaved, initialDate }
         />
       )}
 
-      {/* Picker début */}
-      {picker === 'start' && (
+      {/* Picker date + heure début/fin */}
+      {picker === 'datetime' && (
         <DateTimePicker
-          label="Date et heure de début"
+          label="Date et heure"
           value={form.startAt}
+          endValue={form.endAt}
           onChange={handleStartChange}
+          onEndChange={handleEndChange}
           onClose={() => setPicker(null)}
-        />
-      )}
-
-      {/* Picker fin */}
-      {picker === 'end' && (
-        <DateTimePicker
-          label="Date et heure de fin"
-          value={form.endAt}
-          onChange={(iso) => { set('endAt', iso); setPicker(null); }}
-          onClose={() => setPicker(null)}
+          defaultDuration={defaultDuration}
         />
       )}
     </>
