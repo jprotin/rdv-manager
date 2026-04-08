@@ -12,7 +12,7 @@ RUN firebase setup:emulators:firestore && firebase setup:emulators:ui
 
 WORKDIR /app
 
-EXPOSE 8080 4000
+EXPOSE 8080 9099 4000
 
 COPY emulator/start.sh /start.sh
 RUN chmod +x /start.sh
